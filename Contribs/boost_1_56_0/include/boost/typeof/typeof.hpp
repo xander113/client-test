@@ -100,7 +100,12 @@
 #       define MSVC_TYPEOF_HACK
 #   endif
 #elif defined(_MSC_VER)
-#   if (_MSC_VER <= 1300)  // 6.5, 7.0
+#   if (_MSC_VER >= 1910) && !defined(BOOST_TYPEOF_EMULATION)
+#       ifndef BOOST_TYPEOF_NATIVE
+#           define BOOST_TYPEOF_NATIVE
+#       endif
+#       define BOOST_TYPEOF_DECLTYPE
+#   elif (_MSC_VER <= 1300)  // 6.5, 7.0
 #       ifndef BOOST_TYPEOF_EMULATION
 #           ifndef BOOST_TYPEOF_NATIVE
 #               define BOOST_TYPEOF_NATIVE
@@ -206,7 +211,11 @@
 #elif defined(BOOST_TYPEOF_NATIVE)
 #   define BOOST_TYPEOF_TEXT "using native typeof"
 #   include <boost/typeof/message.hpp>
-#   include <boost/typeof/native.hpp>
+#   ifdef BOOST_TYPEOF_DECLTYPE
+#       include <boost/typeof/decltype.hpp>
+#   else
+#       include <boost/typeof/native.hpp>
+#   endif
 #else
 #   error typeof configuration error
 #endif

@@ -328,12 +328,8 @@ void SpatialFilter::onMovingAssemblyRootAdded(Assembly* a, Time now)
 	a->putInPipeline(this);
 
 	Assembly::FilterPhase desiredPhase = filterAssembly(a, false, now);			// shouldn't matter either way - it will get re-done on the filter call
-#ifdef _WIN32
-	changePhase(MoveInstructions(a, Assembly::NOT_ASSIGNED, desiredPhase));
-#else
-	MoveInstructions mi = MoveInstructions(a, Assembly::NOT_ASSIGNED, desiredPhase);
+	MoveInstructions mi(a, Assembly::NOT_ASSIGNED, desiredPhase);
 	changePhase(mi);
-#endif
 	
 }
 
@@ -343,14 +339,8 @@ void SpatialFilter::onFixedAssemblyRootAdded(Assembly* a)
 	RBXASSERT(a->computeIsGrounded());
 	a->putInPipeline(this);
 
-	// gcc crap on this EL
-	//changePhase(MoveInstructions(a, Assembly::NOT_ASSIGNED, Assembly::Fixed));
-#ifdef _WIN32
-	changePhase(MoveInstructions(a, Assembly::NOT_ASSIGNED, Assembly::Fixed));
-#else 
-	MoveInstructions mi = MoveInstructions(a, Assembly::NOT_ASSIGNED, Assembly::Fixed);
+	MoveInstructions mi(a, Assembly::NOT_ASSIGNED, Assembly::Fixed);
 	changePhase(mi);
-#endif
 	
 }
 

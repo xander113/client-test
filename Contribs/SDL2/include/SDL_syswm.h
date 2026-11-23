@@ -33,6 +33,14 @@
 #include "SDL_video.h"
 #include "SDL_version.h"
 
+/* The Windows SDK headers require the default packing before SDL sets its ABI packing. */
+#if !defined(SDL_PROTOTYPES_ONLY) && defined(SDL_VIDEO_DRIVER_WINDOWS)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 #include "begin_code.h"
 /* Set up for C function definitions, even when using C++ */
 #ifdef __cplusplus
@@ -50,13 +58,6 @@ extern "C" {
 #ifdef SDL_PROTOTYPES_ONLY
 struct SDL_SysWMinfo;
 #else
-
-#if defined(SDL_VIDEO_DRIVER_WINDOWS)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#endif
 
 #if defined(SDL_VIDEO_DRIVER_WINRT)
 #include <Inspectable.h>

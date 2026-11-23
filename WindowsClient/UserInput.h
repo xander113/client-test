@@ -88,8 +88,8 @@ class UserInput : public UserInputBase
 	void sendEvent(shared_ptr<InputObject> event);
 	void sendMouseEvent(InputObject::UserInputType mouseEventType,
 						InputObject::UserInputState mouseEventState,
-						Vector3& position,
-						Vector3& delta);
+						const Vector3& position,
+						const Vector3& delta);
 	// helper for mouse events
 	void processMouseButtonEvent(DIDEVICEOBJECTDATA mouseData,
 		MouseButtonType mouseButton, bool &leftMouseUp); 

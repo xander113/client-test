@@ -446,27 +446,26 @@ LRESULT WebBrowserAxDialog::OnInitDialog(UINT uMsg, WPARAM wParam, LPARAM lParam
 
 	m_events.SetParent(this);
 
-	SHDocVw::IWebBrowserAppPtr pWebBrowser = NULL;
-	HRESULT hr = GetDlgControl(IDC_EXPLORER1, __uuidof(SHDocVw::IWebBrowserAppPtr), (void**)&pWebBrowser);
+	CComPtr<IWebBrowserApp> pWebBrowser;
+	HRESULT hr = GetDlgControl(IDC_EXPLORER1, IID_PPV_ARGS(&pWebBrowser));
 
 	if (SUCCEEDED(hr)) {
 		CComQIPtr<IConnectionPointContainer, &IID_IConnectionPointContainer> cpc(pWebBrowser);
 		CComPtr<IConnectionPoint> cp1;
-		hr = cpc->FindConnectionPoint(__uuidof(SHDocVw::DWebBrowserEventsPtr), &cp1);
 		DWORD dwCookie;
-		hr = cp1->Advise((LPUNKNOWN)&m_events, &dwCookie);
+		if (cpc && SUCCEEDED(cpc->FindConnectionPoint(__uuidof(DWebBrowserEvents), &cp1)))
+			cp1->Advise(&m_events, &dwCookie);
 
 		CComPtr<IConnectionPoint> cp2;
-		hr = cpc->FindConnectionPoint(__uuidof(SHDocVw::DWebBrowserEvents2Ptr), &cp2);
-		hr = cp2->Advise((LPUNKNOWN)&m_events, &dwCookie);
-		
-		hr = pWebBrowser->Navigate( _bstr_t(url.c_str()) );
-	} else {
-		MessageBox("Failed to open web browser", "Error", MB_OK);
-		return FALSE;
+		if (cpc && SUCCEEDED(cpc->FindConnectionPoint(__uuidof(DWebBrowserEvents2), &cp2)))
+			cp2->Advise(&m_events, &dwCookie);
+
+		if (SUCCEEDED(pWebBrowser->Navigate(_bstr_t(url.c_str()), NULL, NULL, NULL, NULL)))
+			return TRUE;    // let the system set the focus
 	}
 
-	return TRUE;    // let the system set the focus
+	MessageBox("Failed to open web browser", "Error", MB_OK);
+	return FALSE;
 }
 
 LRESULT WebBrowserAxDialog::OnClose(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
@@ -479,9 +478,9 @@ HRESULT __stdcall DWebBrowserEventsImpl::QueryInterface(REFIID riid, LPVOID* ppv
 {
 	*ppv = NULL;
 
-	if (IID_IUnknown == riid || __uuidof(SHDocVw::DWebBrowserEventsPtr) == riid)
+	if (IID_IUnknown == riid || __uuidof(DWebBrowserEvents) == riid)
 	{
-		*ppv = (LPUNKNOWN)(SHDocVw::DWebBrowserEventsPtr*)this;
+		*ppv = static_cast<DWebBrowserEvents*>(this);
 		AddRef();
 		return NOERROR;
 	}
@@ -561,15 +560,16 @@ HRESULT DWebBrowserEventsImpl::BeforeNavigate2(_bstr_t URL, long Flags, _bstr_t 
 
 HRESULT DWebBrowserEventsImpl::NavigateComplete(_bstr_t URL) 
 { 
-	SHDocVw::IWebBrowserAppPtr pWebBrowser = NULL;
-	HRESULT hr = m_cpParent->GetDlgControl(IDC_EXPLORER1, __uuidof(SHDocVw::IWebBrowserAppPtr), (void**)&pWebBrowser);
+	CComPtr<IWebBrowserApp> pWebBrowser;
+	HRESULT hr = m_cpParent->GetDlgControl(IDC_EXPLORER1, IID_PPV_ARGS(&pWebBrowser));
+	if (FAILED(hr))
+		return hr;
 
 	CComPtr<IDispatch> spDoc;
 	hr = pWebBrowser->get_Document(&spDoc);
+	if (FAILED(hr))
+		return hr;
 
-	CComPtr<ICustomDoc> customDoc = CComQIPtr<ICustomDoc>(spDoc);
-
-	customDoc->SetUIHandler(m_cpParent);
-
-	return S_OK; 
+	CComQIPtr<ICustomDoc> customDoc(spDoc);
+	return customDoc ? customDoc->SetUIHandler(m_cpParent) : E_NOINTERFACE;
 }

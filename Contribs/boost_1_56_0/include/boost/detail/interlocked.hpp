@@ -28,7 +28,13 @@
 # define BOOST_INTERLOCKED_EXCHANGE InterlockedExchange
 # define BOOST_INTERLOCKED_EXCHANGE_ADD InterlockedExchangeAdd
 # define BOOST_INTERLOCKED_COMPARE_EXCHANGE_POINTER InterlockedCompareExchangePointer
-# define BOOST_INTERLOCKED_EXCHANGE_POINTER InterlockedExchangePointer
+# if defined(_M_IX86)
+// ATL's Win32 replacement for InterlockedExchangePointer drops volatile.
+#  define BOOST_INTERLOCKED_EXCHANGE_POINTER(dest,exchange) \
+    ((void*)::InterlockedExchange((long volatile*)(dest),(long)(exchange)))
+# else
+#  define BOOST_INTERLOCKED_EXCHANGE_POINTER InterlockedExchangePointer
+# endif
 
 #elif defined( BOOST_USE_INTRIN_H )
 

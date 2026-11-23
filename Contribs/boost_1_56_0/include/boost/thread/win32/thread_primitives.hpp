@@ -166,16 +166,35 @@ namespace boost
         namespace win32
         {
             typedef unsigned __int64 ticks_type;
-            namespace detail { typedef int (__stdcall *farproc_t)(); typedef ticks_type (__stdcall *gettickcount64_t)(); }
+            namespace detail
+            {
+#if defined(BOOST_USE_WINDOWS_H)
+                typedef FARPROC farproc_t;
+#else
+                typedef int (__stdcall *farproc_t)();
+#endif
+                typedef ticks_type (__stdcall *gettickcount64_t)();
+            }
+#if defined(BOOST_USE_WINDOWS_H)
+            using ::GetProcAddress;
+# if !defined(BOOST_NO_ANSI_APIS)
+            using ::GetModuleHandleA;
+# else
+            using ::GetModuleHandleW;
+# endif
+            using ::GetTickCount;
+#endif
             extern "C"
             {
+#if !defined(BOOST_USE_WINDOWS_H)
                    __declspec(dllimport) detail::farproc_t __stdcall GetProcAddress(void *, const char *);
-#if !defined(BOOST_NO_ANSI_APIS)
+# if !defined(BOOST_NO_ANSI_APIS)
                    __declspec(dllimport) void * __stdcall GetModuleHandleA(const char *);
-#else
+# else
                    __declspec(dllimport) void * __stdcall GetModuleHandleW(const wchar_t *);
-#endif
+# endif
                 int __stdcall GetTickCount();
+#endif
                 long _InterlockedCompareExchange(long volatile *, long, long);
 #pragma intrinsic(_InterlockedCompareExchange)
             }

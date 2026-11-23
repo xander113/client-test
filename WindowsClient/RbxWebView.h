@@ -2,7 +2,9 @@
 #include "resource.h"
 
 #include <atlcom.h>
+#include <Exdisp.h>
 #include <Exdispid.h> // platform SDK header
+#include <Mshtmhst.h>
 #include "boost/shared_ptr.hpp"
 #include "boost/function.hpp"
 #include "v8datamodel/Game.h"
@@ -58,7 +60,7 @@ public:
 	RbxWebView(const std::string& url, shared_ptr<RBX::Game> game);
 
 	weak_ptr<RBX::Game> getGame() {return game;}
-	SHDocVw::IWebBrowserAppPtr RbxWebView::getWebBrowser();
+	CComPtr<IWebBrowserApp> getWebBrowser();
 
 	LRESULT OnInitDialog(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
 	LRESULT OnClose(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);

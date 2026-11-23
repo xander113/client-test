@@ -145,7 +145,7 @@ void Application::logsCleanUpHelper()
 	curTime.LowPart = curTimeFile.dwLowDateTime;
 	curTime.HighPart = curTimeFile.dwHighDateTime;
 
-	unsigned __int64 MaxLogAge = 3*24*60*60*1000*unsigned __int64(10000);
+	const unsigned __int64 MaxLogAge = 3ULL * 24 * 60 * 60 * 1000 * 10000;
 	for (size_t i = 0;i < folders.size();i ++) {
 		if (stopLogsCleanup == 1)
 		{

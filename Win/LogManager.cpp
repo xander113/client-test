@@ -41,7 +41,7 @@ RBX::mutex MainLogManager::fastLogChannelsLock;
 static const ATL::CPath& DoGetPath()
 {
     // DO NOT REMOVE the CString conversion, this is to preserve the old behavior of losing unicodeness.
-	static ATL::CPath path = CString( RBX::FileSystem::getUserDirectory(true, RBX::DirAppData, "logs").native().c_str() );
+	static ATL::CPath path(CString(RBX::FileSystem::getUserDirectory(true, RBX::DirAppData, "logs").native().c_str()).GetString());
 	return path;
 }
 
@@ -181,7 +181,7 @@ RBX::Log* MainLogManager::provideLog()
 }
 
 
-#include < process.h>
+#include <process.h>
 #include <errno.h>
 #include <stdio.h>
 #include <fcntl.h>
@@ -617,7 +617,7 @@ inline HRESULT WINAPI RbxReportError(const CLSID& clsid, LPCSTR lpszDesc,
 	if (lpszDesc == NULL)
 		return E_POINTER;
 	USES_CONVERSION_EX;
-	CComBSTR desc = CString(lpszDesc);
+	CComBSTR desc(lpszDesc);
 	if(desc == NULL)
 		return E_OUTOFMEMORY;
 	

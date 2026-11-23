@@ -2,7 +2,9 @@
 #include "resource.h"
 
 #include <atlcom.h>
+#include <Exdisp.h>
 #include <Exdispid.h> // platform SDK header
+#include <Mshtmhst.h>
 #include "v8datamodel/DataModel.h"
 #include "boost/shared_ptr.hpp"
 #include "boost/function.hpp"

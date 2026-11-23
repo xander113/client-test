@@ -83,6 +83,11 @@
       <BufferSecurityCheck>false</BufferSecurityCheck>
     </ClCompile>
   </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(ZblocModernWindows)' == 'true'">
+    <ClCompile>
+      <PreprocessorDefinitions>BOOST_THREAD_BUILD_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="$(CONTRIB_PATH)\boost_1_56_0\libs\chrono\src\chrono.cpp" />
     <ClCompile Include="$(CONTRIB_PATH)\boost_1_56_0\libs\chrono\src\process_cpu_clocks.cpp" />
@@ -119,7 +124,9 @@
     <ClCompile Include="$(CONTRIB_PATH)\boost_1_56_0\libs\program_options\src\parsers.cpp" />
     <ClCompile Include="$(CONTRIB_PATH)\boost_1_56_0\libs\program_options\src\positional_options.cpp" />
     <ClCompile Include="$(CONTRIB_PATH)\boost_1_56_0\libs\program_options\src\split.cpp" />
-    <ClCompile Include="$(CONTRIB_PATH)\boost_1_56_0\libs\program_options\src\utf8_codecvt_facet.cpp" />
+    <ClCompile Include="$(CONTRIB_PATH)\boost_1_56_0\libs\program_options\src\utf8_codecvt_facet.cpp">
+      <ObjectFileName>$(IntDir)program_options_utf8_codecvt_facet.obj</ObjectFileName>
+    </ClCompile>
     <ClCompile Include="$(CONTRIB_PATH)\boost_1_56_0\libs\program_options\src\value_semantic.cpp" />
     <ClCompile Include="$(CONTRIB_PATH)\boost_1_56_0\libs\program_options\src\variables_map.cpp" />
     <ClCompile Include="$(CONTRIB_PATH)\boost_1_56_0\libs\program_options\src\winmain.cpp" />

@@ -132,19 +132,19 @@ namespace RBX
 			throw RBX::runtime_error("'%s' is missing a hostName", theUrl.c_str());
 
 		// Use WinHttpOpen to obtain a session handle.
-		WINHTTPHINTERNET hSession = ::WinHttpOpen( L"Roblox/WinHttp", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0 );	
+		WINHTTPHINTERNET hSession(::WinHttpOpen(L"Roblox/WinHttp", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
 		ThrowIfFailure(hSession!=NULL, "WinHttpOpen");
 
 		bool isHttps = u.GetScheme()==ATL_URL_SCHEME_HTTPS;
 
 
 		// Specify an HTTP server.
-		WINHTTPHINTERNET hConnect = ::WinHttpConnect( hSession, CComBSTR(CString(u.GetHostName())), u.GetPortNumber(), 0 );
+		WINHTTPHINTERNET hConnect(::WinHttpConnect(hSession, CComBSTR(CString(u.GetHostName())), u.GetPortNumber(), 0));
 		ThrowIfFailure(hConnect!=NULL, "WinHttpConnect" );
 
 		std::string p = u.GetUrlPath();
 		p += u.GetExtraInfo();
-		WINHTTPHINTERNET hRequest = ::WinHttpOpenRequest( hConnect, isPost ? L"POST" : L"GET", CComBSTR(p.c_str()), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, isHttps ? WINHTTP_FLAG_SECURE : 0);
+		WINHTTPHINTERNET hRequest(::WinHttpOpenRequest(hConnect, isPost ? L"POST" : L"GET", CComBSTR(p.c_str()), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, isHttps ? WINHTTP_FLAG_SECURE : 0));
 		ThrowIfFailure(hRequest!=NULL, "WinHttpOpenRequest");
 
 		DWORD optionValue = WINHTTP_DISABLE_COOKIES;

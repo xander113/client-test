@@ -22,8 +22,11 @@
 # pragma once
 #endif
 
+// The MSVC STL from VS 2017 onward supports the standard streampos conversion
+// and no longer provides the Dinkumware seekpos() and _FPOSOFF extensions.
 # if (defined(_YVALS) || defined(_CPPLIB_VER)) && !defined(__SGI_STL_PORT) && \
-     !defined(_STLPORT_VERSION) && !defined(__QNX__)
+     !defined(_STLPORT_VERSION) && !defined(__QNX__) && \
+     !(defined(_MSVC_STL_VERSION) && _MSVC_STL_VERSION >= 141)
      /**/
 #  define BOOST_IOSTREAMS_HAS_DINKUMWARE_FPOS
 # endif

@@ -349,6 +349,11 @@ public:
     {
         return (LPCTSTR)m_pString;
     };
+
+#ifdef __strmif_h__
+private:
+    void DescribePin(IPin *pPin);
+#endif
 };
 
  

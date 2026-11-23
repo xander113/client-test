@@ -5,7 +5,9 @@
 #pragma once
 
 // Exclude rarely-used stuff from Windows headers
-#define WIN32_LEAN_AND_MEAN 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #define _CRT_SECURE_NO_WARNINGS 1 // Microsoft's standard function deprecation crap: 'strcpy': This function or variable may be unsafe. Consider using strcpy_s instead.
 
 // Windows and library header files
@@ -36,6 +38,3 @@
 #include <boost/program_options.hpp>
 #include <boost/scoped_ptr.hpp>
 #include <boost/bind.hpp>
-
-// Web browser control (needed for ActiveX hosting of IWebBrowser2)
-#import "shdocvw.dll" include("OLECMDID", "OLECMDF", "OLECMDEXECOPT", "tagREADYSTATE")

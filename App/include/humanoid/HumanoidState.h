@@ -330,7 +330,7 @@ namespace RBX
             static inline const void* getComputeEventBaseAddress()
             {
 #ifdef _WIN32
-                bool (RBX::HUMAN::HumanoidState::* hsce)(EventType) = &computeEvent;
+                bool (RBX::HUMAN::HumanoidState::* hsce)(EventType) = &HumanoidState::computeEvent;
                 if(sizeof(hsce) == 8 || sizeof(hsce) == 4)
                 {
                     return (const void*&)(hsce); // odd, but required syntax for this horrible conversion.

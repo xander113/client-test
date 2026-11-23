@@ -297,11 +297,8 @@ namespace rbx
 	class timestamped_safe_queue : protected safe_queue< implementation::timestamped_safe_queue_item<T> >
 	{
 		typedef safe_queue< implementation::timestamped_safe_queue_item<T> > Super;
+		typedef typename Super::mutex mutex;
         double headTimestamp;
-#ifndef _WIN32
-		// GCC won't inherit the mutex type defined in Super. Therefore we redeclare it here. Yuck!
-		typedef spin_mutex mutex;
-#endif
 	public:
 		void clear()
 		{
@@ -318,7 +315,7 @@ namespace rbx
 
 		bool pop_if_present(T& value)
 		{
-			mutex::scoped_lock lock(this->m);
+			typename mutex::scoped_lock lock(this->m);
 			if (!this->queue.empty())
 			{
                 value = this->queue.front().value;
@@ -340,7 +337,7 @@ namespace rbx
 		// pops the head item if it has been waiting at least waitTime
 		bool pop_if_waited(RBX::Time::Interval waitTime, T& value)
 		{
-			mutex::scoped_lock lock(this->m);
+			typename mutex::scoped_lock lock(this->m);
 			if (this->queue.empty())
 				return false;
 			if (RBX::Time::now<RBX::Time::Fast>() < this->queue.front().timestamp + waitTime)

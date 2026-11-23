@@ -1088,9 +1088,14 @@ CDisp::CDisp(CRefTime llTime)
 /*  Display pin */
 CDisp::CDisp(IPin *pPin)
 {
+    DescribePin(pPin);
+}
+
+void CDisp::DescribePin(IPin *pPin)
+{
     PIN_INFO pi;
     TCHAR str[MAX_PIN_NAME];
-    CLSID clsid;
+    CLSID clsid = GUID_NULL;
 
     if (pPin) {
        pPin->QueryPinInfo(&pi);
@@ -1143,7 +1148,7 @@ CDisp::CDisp(IUnknown *pUnk)
     hr = pUnk->QueryInterface(IID_IPin, (void **)&pp);
     if(SUCCEEDED(hr))
     {
-        CDisp::CDisp(pp);
+        DescribePin(pp);
         pp->Release();
         return;
     }

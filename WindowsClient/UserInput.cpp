@@ -761,8 +761,8 @@ void UserInput::postProcessUserInput(bool cursorMoved, bool leftMouseUp, RBX::Ve
 
 void UserInput::sendMouseEvent(InputObject::UserInputType mouseEventType, 
 							   InputObject::UserInputState mouseEventState,
-							   Vector3& position,
-							   Vector3& delta)
+							   const Vector3& position,
+							   const Vector3& delta)
 {
 	FASTLOG1(FLog::UserInputProfile, "Processing mouse event from the queue, event: %u", mouseEventType);
 

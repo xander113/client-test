@@ -162,6 +162,9 @@ namespace RBX
 			}
 		};
 
+#ifdef _MSC_VER
+#pragma optimize("", off)
+#endif
 		template<class T>
 		class ReceiverDictionary
 		{
@@ -183,7 +186,6 @@ namespace RBX
 					stream >> value;
 				}
 			}*/
-#pragma optimize( "", off )
 			void learn(unsigned char id, const T& value)
 			{
 				dictionary[id] = value;
@@ -215,7 +217,6 @@ namespace RBX
 					return get(id, value);
 				}
 			}
-#pragma optimize( "", on ) 
 		};
 
 		class ReceiverStringDictionary
@@ -244,7 +245,6 @@ namespace RBX
 					stream >> value;
 				}
 			}*/
-#pragma optimize( "", off )
 			void learn(unsigned char id, const std::string& value);
 			bool get(unsigned char id, std::string& value);
 			template<class T>
@@ -270,8 +270,10 @@ namespace RBX
 					return get(id, value);
 				}
 			}
-#pragma optimize( "", on ) 
 		};
+#ifdef _MSC_VER
+#pragma optimize("", on)
+#endif
 
 		
 		template<class T>

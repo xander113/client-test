@@ -255,8 +255,8 @@ void salsa20_block(uint8_t *out, uint8_t key[32], uint64_t nonce, uint64_t index
     static const char c[16] = "expand 32byte k"; // arbitrary constant
 #define LE(p) ( _byteswap_ulong(*reinterpret_cast<const unsigned long*>(p)) )
     uint32_t in[16] = {LE(c),            LE(key),    LE(key+4),        LE(key+8),
-        LE(key+12),       LE(c+4),    nonce&0xffffffff, nonce>>32,
-        index&0xffffffff, index>>32,  LE(c+8),          LE(key+16),
+        LE(key+12),       LE(c+4),    static_cast<uint32_t>(nonce), static_cast<uint32_t>(nonce >> 32),
+        static_cast<uint32_t>(index), static_cast<uint32_t>(index >> 32), LE(c+8), LE(key+16),
         LE(key+20),       LE(key+24), LE(key+28),       LE(c+12)};
 #undef LE
     uint32_t wordout[16];

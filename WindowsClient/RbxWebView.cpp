@@ -166,10 +166,10 @@ HRESULT RbxWebView::Invoke(DISPID dispIdMember, REFIID riid, LCID lcid, WORD wFl
 	return S_OK;
 }
 
-SHDocVw::IWebBrowserAppPtr RbxWebView::getWebBrowser()
+CComPtr<IWebBrowserApp> RbxWebView::getWebBrowser()
 {
-	SHDocVw::IWebBrowserAppPtr pWebBrowser = NULL;
-	GetDlgControl(IDC_RBXEXPLORER, __uuidof(SHDocVw::IWebBrowserAppPtr), (void**)&pWebBrowser);
+	CComPtr<IWebBrowserApp> pWebBrowser;
+	GetDlgControl(IDC_RBXEXPLORER, IID_PPV_ARGS(&pWebBrowser));
 
 	return pWebBrowser;
 }
@@ -185,21 +185,20 @@ LRESULT RbxWebView::OnInitDialog(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& 
 	SetIcon(m_hIcon, TRUE);			// Set big icon
 	SetIcon(m_hIcon, FALSE);		// Set small icon
 
-	SHDocVw::IWebBrowserAppPtr pWebBrowser = NULL;
-	HRESULT hr = GetDlgControl(IDC_RBXEXPLORER, __uuidof(SHDocVw::IWebBrowserAppPtr), (void**)&pWebBrowser);
+	CComPtr<IWebBrowserApp> pWebBrowser = getWebBrowser();
 
-	if (SUCCEEDED(hr)) 
+	if (pWebBrowser)
 	{
 		// setup hooks into browser events
 		CComQIPtr<IConnectionPointContainer, &IID_IConnectionPointContainer> cpc(pWebBrowser);
 		CComPtr<IConnectionPoint> cp1;
-		hr = cpc->FindConnectionPoint(__uuidof(SHDocVw::DWebBrowserEventsPtr), &cp1);
 		DWORD dwCookie;
-		hr = cp1->Advise((LPUNKNOWN)&webBrowserEvents, &dwCookie);
+		if (cpc && SUCCEEDED(cpc->FindConnectionPoint(__uuidof(DWebBrowserEvents), &cp1)))
+			cp1->Advise(&webBrowserEvents, &dwCookie);
 
 		CComPtr<IConnectionPoint> cp2;
-		hr = cpc->FindConnectionPoint(__uuidof(SHDocVw::DWebBrowserEvents2Ptr), &cp2);
-		hr = cp2->Advise((LPUNKNOWN)&webBrowserEvents, &dwCookie);
+		if (cpc && SUCCEEDED(cpc->FindConnectionPoint(__uuidof(DWebBrowserEvents2), &cp2)))
+			cp2->Advise(&webBrowserEvents, &dwCookie);
 
 		// now set the header before the request
 		std::string userAgent = "Mozilla/4.0 (compatible; MSIE 7.0) ";
@@ -209,16 +208,15 @@ LRESULT RbxWebView::OnInitDialog(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& 
 		::UrlMkSetSessionOption(URLMON_OPTION_USERAGENT, &userAgentChars[0], userAgent.length(), 0);
 
 		// navigate to default page
-		pWebBrowser->Navigate(_bstr_t(url.c_str()),NULL,NULL,NULL,NULL);
-	}
-	else 
-	{
-		MessageBox("Failed to open web browser", "Error", MB_OK);
-		return FALSE;
+		if (SUCCEEDED(pWebBrowser->Navigate(_bstr_t(url.c_str()), NULL, NULL, NULL, NULL)))
+		{
+			dialogActive = true;
+			return TRUE;    // let the system set the focus
+		}
 	}
 
-	dialogActive = true;
-	return TRUE;    // let the system set the focus
+	MessageBox("Failed to open web browser", "Error", MB_OK);
+	return FALSE;
 }
 
 LRESULT RbxWebView::OnClose(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
@@ -238,10 +236,9 @@ void RbxWebView::closeDialog()
 
 LRESULT RbxWebView::OnSize(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
 {
-	SHDocVw::IWebBrowserAppPtr pWebBrowser = NULL;
-	HRESULT hr = GetDlgControl(IDC_RBXEXPLORER, __uuidof(SHDocVw::IWebBrowserAppPtr), (void**)&pWebBrowser);
+	CComPtr<IWebBrowserApp> pWebBrowser = getWebBrowser();
 
-	if (SUCCEEDED(hr))
+	if (pWebBrowser)
 	{
 		CRect rect;
 		GetWindowRect(&rect);
@@ -257,9 +254,9 @@ HRESULT __stdcall WebBrowserEvents::QueryInterface(REFIID riid, LPVOID* ppv)
 {
 	*ppv = NULL;
 
-	if (IID_IUnknown == riid || __uuidof(SHDocVw::DWebBrowserEventsPtr) == riid)
+	if (IID_IUnknown == riid || __uuidof(DWebBrowserEvents) == riid)
 	{
-		*ppv = (LPUNKNOWN)(SHDocVw::DWebBrowserEventsPtr*)this;
+		*ppv = static_cast<DWebBrowserEvents*>(this);
 		AddRef();
 		return NOERROR;
 	}
