@@ -16,10 +16,12 @@ Download or clone the full repository before running the builder. The builder
 finds the checkout beside the executable or in the current directory.
 When double-clicked, TESTEX keeps its console open until you press Enter.
 It prints the location of its build log in your Windows temporary directory.
-TESTEX checks for the Visual C++ MSBuild targets before building. If it reports
-that Microsoft.Cpp.Default.props is missing, install or repair the C++ tools
-for Visual Studio 2012. The MSBuild executable from the .NET Framework
-does not provide those targets by itself.
+TESTEX checks registered Visual Studio installations for the Win32
+`v110` and `v110_xp` toolsets before building. Run `TESTEX.exe -diagnose`
+to see which installations and toolsets it finds without starting the build.
+Both toolsets come from the Visual Studio 2012 C++ tools and Windows XP
+targeting support. If a custom legacy installation is already present, try its
+x86 Native Tools Command Prompt.
 Use `-repo "C:\src\CLIENT-MASTER"` for a separate checkout location and
 `-msbuild "C:\path\to\MSBuild.exe"` to select MSBuild explicitly.
 
@@ -40,7 +42,7 @@ To rebuild the builder itself with Go, run this command from the checkout root
 with `GOOS=windows`, `GOARCH=amd64`, and `CGO_ENABLED=0`:
 
 ```text
-go build -trimpath -ldflags="-s -w" -o TESTEX.exe tools/testex/main.go tools/testex/console_windows.go
+go build -trimpath -ldflags="-s -w" -o TESTEX.exe tools/testex/main.go tools/testex/toolchain.go tools/testex/console_windows.go
 ```
 
 ## Build and test Zbloc on Mac with TEXTEXMAC

@@ -73,7 +73,6 @@ func runLogged(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "TESTEX:", err)
 		return 1
 	}
-	fmt.Fprintln(stdout, "\nBuild complete.")
 	return 0
 }
 
@@ -81,7 +80,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("TESTEX.exe", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	repo := flags.String("repo", "", "Path to the source checkout (defaults to the executable directory or current directory)")
-	msbuildPath := flags.String("msbuild", "", "Explicit path to MSBuild.exe (defaults to PATH or MSBuild 4.0)")
+	msbuildPath := flags.String("msbuild", "", "Explicit path to MSBuild.exe")
+	diagnose := flags.Bool("diagnose", false, "List the detected Visual Studio toolchain without building")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "TESTEX.exe builds Zbloc Player and Zbloc Studio for Win32.")
 		flags.PrintDefaults()
@@ -96,22 +96,34 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return errors.New("building Player and Studio requires Windows and the Visual Studio 2012 C++ toolchain")
 	}
 
-	root, err := findRepo(*repo)
+	var root string
+	if !*diagnose {
+		var err error
+		root, err = findRepo(*repo)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, "Checkout:", root)
+	}
+	installations := visualStudioInstallations(stdout)
+	vcTargets, err := findVCTargets(installations, registeredVCTargets(), stdout)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(stdout, "Checkout:", root)
-	vcTargets, err := findVCTargets()
-	if err != nil {
-		return err
-	}
-	msbuild, err := findMSBuild(*msbuildPath)
+	msbuild, err := findMSBuild(*msbuildPath, vcTargets)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintln(stdout, "MSBuild:", msbuild)
 	fmt.Fprintln(stdout, "Visual C++ targets:", vcTargets.path)
-	return build(root, msbuild, vcTargets, stdout, stderr)
+	if *diagnose {
+		return nil
+	}
+	if err := build(root, msbuild, vcTargets, stdout, stderr); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "\nBuild complete.")
+	return nil
 }
 
 func findRepo(path string) (string, error) {
@@ -135,45 +147,7 @@ func findRepo(path string) (string, error) {
 	return root, nil
 }
 
-type vcTargetSet struct {
-	path    string
-	version string
-}
-
-func findVCTargets() (vcTargetSet, error) {
-	if path := filepath.Clean(os.Getenv("VCTargetsPath")); hasVCTargets(path) {
-		version := os.Getenv("VisualStudioVersion")
-		if strings.EqualFold(filepath.Base(path), "V110") {
-			version = "11.0"
-		}
-		return vcTargetSet{path: path, version: version}, nil
-	}
-
-	// VS 2012 uses the 32-bit MSBuild extensions tree, even on 64-bit Windows.
-	for _, variable := range []string{"MSBuildExtensionsPath32", "ProgramFiles(x86)", "ProgramW6432", "ProgramFiles"} {
-		root := os.Getenv(variable)
-		if root == "" {
-			continue
-		}
-		if variable != "MSBuildExtensionsPath32" {
-			root = filepath.Join(root, "MSBuild")
-		}
-		path := filepath.Join(root, "Microsoft.Cpp", "v4.0", "V110")
-		if hasVCTargets(path) {
-			return vcTargetSet{path: path, version: "11.0"}, nil
-		}
-	}
-	return vcTargetSet{}, errors.New("Visual C++ MSBuild targets were not found (Microsoft.Cpp.Default.props). Install or repair Visual Studio 2012 Update 5 with Visual C++, MFC, and the v110/v110_xp toolsets, then run TESTEX.exe from the Visual Studio 2012 Developer Command Prompt")
-}
-
-func hasVCTargets(path string) bool {
-	return filepath.IsAbs(path) &&
-		isFile(filepath.Join(path, "Microsoft.Cpp.Default.props")) &&
-		isFile(filepath.Join(path, "Microsoft.Cpp.props")) &&
-		isFile(filepath.Join(path, "Microsoft.Cpp.targets"))
-}
-
-func findMSBuild(path string) (string, error) {
+func findMSBuild(path string, targets vcTargetSet) (string, error) {
 	if path != "" {
 		absolute, err := filepath.Abs(path)
 		if err != nil {
@@ -184,14 +158,17 @@ func findMSBuild(path string) (string, error) {
 		}
 		return absolute, nil
 	}
-	if found, err := exec.LookPath("MSBuild.exe"); err == nil {
-		return filepath.Abs(found)
+	if targets.msbuild != "" {
+		return targets.msbuild, nil
 	}
-	if windows := os.Getenv("SystemRoot"); windows != "" {
+	if windows := os.Getenv("SystemRoot"); windows != "" && targets.version == "11.0" {
 		legacy := filepath.Join(windows, "Microsoft.NET", "Framework", "v4.0.30319", "MSBuild.exe")
 		if isFile(legacy) {
 			return legacy, nil
 		}
+	}
+	if found, err := exec.LookPath("MSBuild.exe"); err == nil {
+		return filepath.Abs(found)
 	}
 	return "", errors.New("MSBuild.exe is unavailable; use a Visual Studio Developer Command Prompt or pass -msbuild")
 }
