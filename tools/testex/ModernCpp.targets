@@ -3,6 +3,10 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <LanguageStandard>stdcpp14</LanguageStandard>
+      <!-- Keep debug symbols in each object to avoid shared compiler PDB writes. -->
+      <DebugInformationFormat Condition="'%(DebugInformationFormat)' == 'ProgramDatabase' Or '%(DebugInformationFormat)' == 'EditAndContinue'">OldStyle</DebugInformationFormat>
+      <ProgramDataBaseFileName Condition="'%(DebugInformationFormat)' == 'OldStyle'" />
+      <MinimalRebuild Condition="'%(DebugInformationFormat)' == 'OldStyle'">false</MinimalRebuild>
       <PreprocessorDefinitions>BOOST_ALL_NO_LIB;BOOST_USE_WINDOWS_H;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(VC_IncludePath);$(WindowsSDK_IncludePath);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
