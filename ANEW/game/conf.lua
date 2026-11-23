@@ -10,7 +10,8 @@ function love.conf(t)
     t.window.minheight=product=="studio" and 680 or 540
     t.window.highdpi=true
     t.window.vsync=1
-    t.modules.audio=false
+    t.modules.audio=product=="client"
+    t.modules.sound=product=="client"
     t.modules.joystick=false
     t.modules.physics=false
 end

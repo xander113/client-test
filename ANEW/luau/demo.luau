@@ -12,8 +12,11 @@ function Demo.load(root,id)
         part("garden-switch","Garden switch",{2.6,.35,11},{1,.7,1},"#efb64c")
         part("garden-gate","Garden gate",{0,1.05,8.15},{3.5,2.1,.3},"#3c9564")
         part("welcome-plate","Welcome plate",{-2.8,.07,10.1},{2.3,.14,2.1},"#497eac")
+        p.objects[#p.objects+1]={id="terrace-entry",name="Terrace entry",kind="spawn",position={0,-.06,12},
+            size={2.4,.12,2.4},rotation={0,0,0},color="#88bca1",solid=false,enabled=true}
+        p.defaultSpawn="terrace-entry"
         p.scripts=Wire.array({
-            {part="garden-switch",enabled=true,source=[=[
+            {id="gate-control",name="Gate control",kind="script",parent="garden-switch",enabled=true,source=[=[
 -- Press E near the switch, or click it within reach.
 Pot.onPress(function(player)
     if not Pot.flag("gateOpen") then
@@ -29,9 +32,14 @@ Pot.onPress(function(player)
     end
 end)
 ]=]},
-            {part="welcome-plate",enabled=true,source=[=[
+            {id="welcome-glow",name="Welcome glow",kind="script",parent="welcome-plate",enabled=true,source=[=[
 Pot.onTouch(function(player: string)
     Pot.pulse("self", 2, "#8ee1ff")
+end)
+]=]},
+            {id="arrival-glow",name="Arrival glow",kind="local",parent="terrace-entry",enabled=true,source=[=[
+Pot.onSpawn(function(player)
+    Pot.pulse("self", 1.5, "#b6f4c6")
 end)
 ]=]},
         })

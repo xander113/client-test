@@ -10,9 +10,10 @@ local reserved = {}
 for v in ("and break do else elseif end export false for function if in local nil not or repeat return then true type until while Pot"):gmatch("%S+") do
     reserved[v] = true
 end
-local arity = {setColor=2, setSolid=2, setVisible=2, pulse=3, setFlag=2, flag=1, isSolid=1}
+local arity = {setColor=2, setSolid=2, setVisible=2, pulse=3, setFlag=2, flag=1, isSolid=1, spawn=2}
 local readable = {flag=true, isSolid=true}
 local tags = {boolean=true, number=true, string=true}
+local events = {onPress=true,onTouch=true,onSpawn=true}
 
 local function lex(source)
     assert(type(source) == "string" and #source <= Script.maxSource, "Scripts are limited to 4 KB.")
@@ -63,7 +64,7 @@ local function lex(source)
     return tokens
 end
 
-function Script.compile(source)
+function Script.compile(source,kind,hasPart)
     local tokens, at, nesting = lex(source), 1, 0
     local function peek() return tokens[at].text end
     local function check(ok, message)
@@ -151,6 +152,7 @@ function Script.compile(source)
                 take("Pot"); take(".")
                 local name = peek()
                 check((arity[name] and not readable[name]) or name == "after", "this Pot action is unavailable.")
+                check(kind~="local" or (name~="setSolid" and name~="spawn"),"this action requires a Script running on the server.")
                 at += 1
                 if name == "after" then
                     take("("); expression(scope,1); take(","); callback(scope,false); take(")")
@@ -164,7 +166,8 @@ function Script.compile(source)
     end
     while peek() ~= "<eof>" do
         take("Pot"); take(".")
-        check(peek() == "onPress" or peek() == "onTouch", "start with Pot.onPress or Pot.onTouch.")
+        check(events[peek()], "start with Pot.onPress, Pot.onTouch or Pot.onSpawn.")
+        check(hasPart~=false or peek()=="onSpawn", "press and touch callbacks require a part ancestor.")
         at += 1
         take("("); callback({}, true); take(")")
         if peek() == ";" then take(";") end

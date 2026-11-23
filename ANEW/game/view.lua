@@ -89,7 +89,8 @@ function View.new(change,select,press)
     local shader,models=graphics()
     return setmetatable({shader=shader,models=models,objects={},parts={},actors={},effects={},
         yaw=.72,pitch=.48,distance=45,target={0,0,0},goal=nil,tool="select",snap=.5,angle=15,
-        playing=false,interaction=nil,change=change,select=select,press=press},View)
+        playing=false,interaction=nil,change=change,select=select,press=press,
+        renderScale=1,maxCanvas=G.getSystemLimits().texturesize},View)
 end
 
 function View:set(scene)
@@ -127,7 +128,7 @@ function View:play(on)
         self.editor={self.yaw,self.pitch,self.distance,self.target}
         self.yaw,self.pitch,self.distance=0,.34,6.5
         self.actors,self.effects={},{}
-        self.localID,self.interaction=nil,nil
+        self.localID,self.interaction,self.allowReset=nil,nil,nil
     elseif self.editor then
         self.yaw,self.pitch,self.distance,self.target=unpack(self.editor)
         self.actors,self.effects={},{}
@@ -138,7 +139,7 @@ function View:play(on)
 end
 
 function View:state(event)
-    if event.type=="welcome" then self.localID=event.id; return end
+    if event.type=="welcome" then self.localID,self.allowReset=event.id,event.allowReset; return end
     if event.type~="state" then return end
     local seen,overrides={},{}
     for _,fx in ipairs(event.effects or {}) do overrides[fx.id]=fx end
@@ -146,7 +147,11 @@ function View:state(event)
     for _,p in ipairs(event.players) do
         seen[p.id]=true
         local a=self.actors[p.id]
-        if not a then a={at={p.x,p.y,p.z},yaw=p.yaw,phase=0,swing=0}; self.actors[p.id]=a end
+        if not a or a.life~=p.life then
+            a={at={p.x,p.y,p.z},yaw=p.yaw,phase=0,swing=0,life=p.life}
+            self.actors[p.id]=a
+            if p.life and p.id==self.localID then self.yaw=p.yaw end
+        end
         a.goal,a.heading,a.color,a.name={p.x,p.y,p.z},p.yaw,p.color,p.name
         if p.id==self.localID then self.interaction=p.interaction end
     end
@@ -195,24 +200,29 @@ function View:mesh(kind,at,size,rgb,rotation,shine)
 end
 
 function View:avatar(a)
-    local function limb(at,size,color,pitch)
-        local yaw=math.deg(a.yaw)
-        local b=basis({pitch or 0,yaw,0})
-        local offset=Mesh.rotate(basis({0,yaw,0}),plain(at))
-        self:mesh("box",add(a.at,offset,1),size,color,b,0)
+    local heading=basis({0,math.deg(a.yaw),0})
+    local function block(at,size,color,pitch)
+        local rotation=heading
+        if pitch then
+            local turn=basis({pitch,0,0})
+            at=add(at,turn[2],-size[2]*.5)
+            rotation={heading[1],Mesh.rotate(heading,plain(turn[2])),Mesh.rotate(heading,plain(turn[3]))}
+        end
+        self:mesh("box",add(a.at,Mesh.rotate(heading,plain(at)),1),size,color,rotation,0)
     end
     local swatch={Mesh.rgb(a.color)}
-    local coat={swatch[1]*.80+.06,swatch[2]*.80+.1,swatch[3]*.80+.07}
-    local leg={.15,.21,.27}
+    local jacket={swatch[1]*.84+.06,swatch[2]*.84+.08,swatch[3]*.84+.07}
+    local sleeve={jacket[1]*.70+.12,jacket[2]*.70+.12,jacket[3]*.70+.13}
+    local trousers={.17,.24,.24}
     local swing=math.sin(a.phase)*a.swing
-    limb({0,.90,0},{.56,.51,.31},coat)
-    limb({0,1.38,0},{.44,.43,.42},{.84,.77,.62})
-    limb({0,1.42,-.216},{.32,.13,.023},{.19,.28,.34})
-    limb({0,.99,-.163},{.14,.052,.016},{.86,.93,.83})
-    limb({-.40,.87,0},{.20,.54,.27},{.76,.75,.67},swing)
-    limb({.40,.87,0},{.20,.54,.27},{.76,.75,.67},-swing)
-    limb({-.14,.30,0},{.25,.60,.28},leg,-swing)
-    limb({.14,.30,0},{.25,.60,.28},leg,swing)
+    block({0,.903,0},{.594,.598,.315},jacket)
+    block({0,1.412,0},{.461,.414,.424},{.86,.82,.72})
+    block({-.436,1.189,0},{.252,.597,.30},sleeve,swing)
+    block({.436,1.189,0},{.252,.597,.30},sleeve,-swing)
+    block({-.150,.604,0},{.284,.604,.312},trousers,-swing)
+    block({.150,.604,0},{.284,.604,.312},trousers,swing)
+    block({0,1.442,-.217},{.342,.107,.016},{.14,.25,.24})
+    block({.134,1.026,-.163},{.094,.045,.015},{.92,.97,.84})
 end
 
 function View:axes(object)
@@ -276,9 +286,11 @@ function View:draw(x,y,w,h)
     if w<10 or h<10 then return end
     self:camera(x,y,w,h)
     w,h=math.floor(w),math.floor(h)
-    if not self.canvas or self.canvas:getWidth()~=w or self.canvas:getHeight()~=h then
+    local scale=math.min(self.renderScale,self.maxCanvas/w,self.maxCanvas/h)
+    local pixelW,pixelH=math.floor(w*scale),math.floor(h*scale)
+    if not self.canvas or self.canvas:getWidth()~=pixelW or self.canvas:getHeight()~=pixelH then
         if self.canvas then self.canvas:release() end
-        self.canvas=G.newCanvas(w,h,{dpiscale=1})
+        self.canvas=G.newCanvas(pixelW,pixelH,{dpiscale=1})
     end
     G.setCanvas({self.canvas,depth=true})
     G.clear(.84,.92,.97,1,true,true)
@@ -294,17 +306,34 @@ function View:draw(x,y,w,h)
         if not fx or fx.visible then
             local color=fx and (fx.pulse or fx.color) or o.color
             local pulse=fx and fx.pulse and .52+math.sin(love.timer.getTime()*8)*.38 or 0
-            self:mesh(o.kind,o.position,o.size,{Mesh.rgb(color)},basis(o.rotation),pulse)
+            if o.kind=="spawn" and not self.playing then
+                color=o.enabled and "#64ba80" or "#88938b"
+                pulse=.16
+            end
+            self:mesh(o.kind=="spawn" and "box" or o.kind,o.position,o.size,{Mesh.rgb(color)},basis(o.rotation),pulse)
         end
     end
     for _,a in pairs(self.actors) do if self.playing then self:avatar(a) end end
     G.setShader()
     G.setDepthMode()
     G.setCanvas()
-    G.setColor(1,1,1); G.draw(self.canvas,x,y)
+    G.setColor(1,1,1); G.draw(self.canvas,x,y,0,w/pixelW,h/pixelH)
     G.setScissor(x,y,w,h)
     local object=not self.playing and self.selected and self.parts[self.selected]
     if object then self:outline(object) end
+    if self.playing then
+        for id,actor in pairs(self.actors) do
+            if id~=self.localID then
+                local ax,ay,depth=self:project({actor.at[1],actor.at[2]+1.88,actor.at[3]})
+                if ax and depth<34 then
+                    local font=G.getFont()
+                    local width=font:getWidth(actor.name)+14
+                    G.setColor(.09,.17,.14,.83); G.rectangle("fill",ax-width/2,ay-17,width,18,3)
+                    G.setColor(1,1,1); G.print(actor.name,ax-width/2+7,ay-16)
+                end
+            end
+        end
+    end
     G.setScissor()
 end
 

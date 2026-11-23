@@ -89,7 +89,7 @@ function Thumbnail.render(place)
             vertices[v]=o
             return o
         end
-        for _,triangle in ipairs(Mesh[part.kind]) do
+        for _,triangle in ipairs(Mesh[part.kind=="spawn" and "box" or part.kind]) do
             local a,v,c=project(triangle[1]),project(triangle[2]),project(triangle[3])
             if a[5]>0 or v[5]>0 or c[5]>0 then draw(pixels,depth,a,v,c,r,g,b) end
         end

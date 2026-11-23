@@ -2,11 +2,12 @@ local fs = require("@lune/fs")
 local serde = require("@lune/serde")
 local Wire = require("./wire")
 local Script = require("./scripting")
+local Hierarchy = require("./hierarchy")
 
-local Place = {version=3, limit=256*1024, magic="POT\0\1"}
+local Place = {version=4, limit=256*1024, magic="POT\0\1"}
 local sequence = 0
 local nonce = math.random(0,0xffffff)
-local kinds = {box=true,sphere=true,cylinder=true}
+local kinds = {box=true,sphere=true,cylinder=true,spawn=true}
 
 function Place.id(s)
     return type(s)=="string" and #s<=64 and s:match("^[a-z0-9][a-z0-9%-]*$") ~= nil
@@ -32,14 +33,17 @@ local function vector(v, lo, hi, lowY)
 end
 
 function Place.validate(p)
-    assert(type(p)=="table" and (p.schemaVersion == 3 or p.schemaVersion == 2 or p.schemaVersion == 1), "Unsupported Pot project version.")
+    assert(type(p)=="table" and (p.schemaVersion==4 or p.schemaVersion==3 or p.schemaVersion==2 or p.schemaVersion==1),
+        "Unsupported Pot project version.")
     local old = p.schemaVersion
     assert(Place.id(p.id) and text(p.name,80,true) and text(p.description,400,false), "Invalid place name, ID or description.")
     assert(type(p.spawn)=="table" and vector({p.spawn.x,p.spawn.y,p.spawn.z},-250,250,-40), "Spawn is outside the place.")
     assert(type(p.objects)=="table" and #p.objects<=400, "A place has at most 400 parts.")
+    assert(old<4 or p.allowReset==nil or type(p.allowReset)=="boolean", "Invalid character reset policy.")
     local result = {
         schemaVersion=Place.version,id=p.id,name=p.name,description=p.description,
-        spawn={x=p.spawn.x,y=p.spawn.y,z=p.spawn.z},objects=Wire.array(),scripts=Wire.array(),
+        spawn={x=p.spawn.x,y=p.spawn.y,z=p.spawn.z}, allowReset=old<4 or p.allowReset~=false,
+        objects=Wire.array(),scripts=Wire.array(),
     }
     local ids = {}
     for i,o in ipairs(p.objects) do
@@ -49,18 +53,37 @@ function Place.validate(p)
         assert(vector(o.position,-250,250,-40) and vector(o.size,.1,128) and vector(rotation,-180,180), "Invalid transform for "..o.name..".")
         assert(Place.color(o.color) and type(o.solid)=="boolean", "Invalid appearance for "..o.name..".")
         ids[o.id]=true
+        assert(old<4 or o.parent==nil or Place.id(o.parent),"Invalid part parent.")
+        assert(o.kind~="spawn" or (old==4 and type(o.enabled)=="boolean"),"Invalid spawn point.")
         result.objects[i]={id=o.id,name=o.name,kind=o.kind,position=table.clone(o.position),
-            size=table.clone(o.size),rotation=table.clone(rotation),color=o.color:lower(),solid=o.solid}
+            size=table.clone(o.size),rotation=table.clone(rotation),color=o.color:lower(),solid=o.solid,
+            parent=if old==4 then o.parent else nil,enabled=if o.kind=="spawn" then o.enabled else nil}
     end
-    local scripts = if old == 3 then p.scripts else {}
+    local scripts = if old>=3 then p.scripts else {}
     assert(type(scripts)=="table" and #scripts<=48, "A place has at most 48 scripts.")
-    local used = {}
     for i,s in ipairs(scripts) do
-        assert(type(s)=="table" and ids[s.part] and not used[s.part] and type(s.source)=="string"
+        assert(type(s)=="table" and type(s.source)=="string"
             and #s.source<=Script.maxSource and utf8.len(s.source) and type(s.enabled)=="boolean",
-            "Invalid script or multiple scripts on one part.")
-        used[s.part]=true
-        result.scripts[i]={part=s.part,source=s.source,enabled=s.enabled}
+            "Invalid script at row "..i..".")
+        local id,name,kind,parent=s.id,s.name,s.kind,s.parent
+        if old==3 then
+            assert(Place.id(s.part) and ids[s.part],"Invalid script part.")
+            id,name,kind,parent="script-"..i,"Script","script",s.part
+            while ids[id] do id..="-s" end
+        end
+        assert(Place.id(id) and not ids[id] and text(name,80,true) and (kind=="script" or kind=="local")
+            and (parent==nil or Place.id(parent)),"Invalid script name, ID, type or parent.")
+        ids[id]=true
+        result.scripts[i]={id=id,name=name,kind=kind,parent=parent,source=s.source,enabled=s.enabled}
+    end
+    local nodes=Hierarchy.index(result)
+    for _,node in pairs(nodes) do
+        assert(Hierarchy.canParent(nodes,node,node.parent),"Invalid hierarchy at "..node.name..". A parent must exist and cannot be a descendant.")
+    end
+    if old==4 and p.defaultSpawn~=nil then
+        local spawn=Place.id(p.defaultSpawn) and nodes[p.defaultSpawn]
+        assert(spawn and spawn.kind=="spawn" and spawn.enabled,"Default spawn must be an enabled spawn point.")
+        result.defaultSpawn=p.defaultSpawn
     end
     return result
 end
@@ -72,16 +95,28 @@ function Place.wire(p)
     return canonical, content
 end
 
-function Place.programs(p)
+function Place.programs(p,kind)
     local result={}
+    local nodes=Hierarchy.index(p)
     for _,s in ipairs(p.scripts) do
-        if s.enabled then
-            local ok, code = pcall(Script.compile,s.source)
-            assert(ok, "Script on "..s.part..": "..tostring(code))
-            result[s.part]=code
+        if s.enabled and (not kind or kind==s.kind) then
+            local owner=Hierarchy.owner(nodes,s)
+            local ok,code=pcall(Script.compile,s.source,s.kind,owner~=nil)
+            assert(ok,s.name..": "..tostring(code))
+            result[#result+1]={part=owner and owner.id,code=code}
         end
     end
     return result
+end
+
+function Place.spawnInfo(p)
+    local points=Wire.array()
+    for _,part in ipairs(p.objects) do
+        if part.kind=="spawn" then
+            points[#points+1]={id=part.id,name=part.name,enabled=part.enabled,position=part.position,yaw=part.rotation[2]}
+        end
+    end
+    return {allowReset=p.allowReset,defaultSpawn=p.defaultSpawn,fallback=p.spawn,points=points}
 end
 
 function Place.decode(data)

@@ -1,11 +1,14 @@
 local UI=require("ui")
 local View=require("view")
 local Wire=require("wire")
+local Hierarchy=require("hierarchy")
 local G=love.graphics
 local Studio={}
 Studio.__index=Studio
 local C=UI.colors
-local shapes={box={"Box",{2,2,2},"#3eb36e"},sphere={"Sphere",{2,2,2},"#568ee0"},cylinder={"Cylinder",{2,3,2},"#dfa64e"}}
+local shapes={box={"Box",{2,2,2},"#3eb36e"},sphere={"Sphere",{2,2,2},"#568ee0"},
+    cylinder={"Cylinder",{2,3,2},"#dfa64e"},spawn={"Spawn Point",{3,.15,3},"#83bd9b"}}
+local scriptNames={script="Script",["local"]="Local Script"}
 local words={translate="Move",rotate="Rotate",scale="Scale",select="Select"}
 local templates={
     press=[=[-- Press E or click this part while nearby.
@@ -19,6 +22,11 @@ Pot.onTouch(function(player: string)
     Pot.pulse("self", 2, "#91e4ff")
 end)
 ]=],
+    spawn=[=[-- Runs when this player joins or respawns.
+Pot.onSpawn(function(player)
+    Pot.setFlag("playerArrived", true)
+end)
+]=],
 }
 local function id()
     return ("%x-%x-%x"):format(os.time(),love.math.random(0,0xffffff),love.math.random(0,0xffffff))
@@ -26,7 +34,7 @@ end
 local function clamp(a,b,c) return math.max(b,math.min(c,a)) end
 local function copy(v) return Wire.decode(Wire.encode(v)) end
 local function blank()
-    return {schemaVersion=3,id="world-"..id(),name="Untitled world",description="",spawn={x=0,y=0,z=5},
+    return {schemaVersion=4,id="world-"..id(),name="Untitled world",description="",spawn={x=0,y=0,z=5},allowReset=true,
         objects=Wire.array({{id="ground",name="Ground",kind="box",position={0,-.5,0},rotation={0,0,0},size={34,1,34},
             color="#91bfa0",solid=true}}),scripts=Wire.array()}
 end
@@ -65,15 +73,29 @@ function Studio:set(scene,filename)
     self.history={{data=Wire.encode(scene)}}
     self.index=1
     self.saved=self.history[1].data
-    self.query,self.scroll="",0
-    self.view:set(scene)
+    self.query,self.scroll,self.collapsed="",0,{}
+    self:refresh()
     self.view.selected=nil
     self.view:frame(nil,"perspective",true)
 end
 
-function Studio:select(value)
+function Studio:refresh()
+    self.nodes,self.children=Hierarchy.index(self.scene)
+    self.view:set(self.scene)
+    self.view.selected=self.view.parts[self.selected] and self.selected or nil
+end
+
+function Studio:select(value,reveal)
     self.selected=value
-    self.view.selected=value
+    self.view.selected=self.view.parts[value] and value or nil
+    if reveal~=false and value then
+        local node=self.nodes[value]
+        while node and node.parent do
+            self.collapsed[node.parent]=nil
+            node=self.nodes[node.parent]
+        end
+        self.reveal=value
+    end
 end
 
 function Studio:checkpoint()
@@ -83,7 +105,7 @@ function Studio:checkpoint()
     self.history[#self.history+1]={data=data,selected=self.selected}
     if #self.history>65 then table.remove(self.history,1) end
     self.index=#self.history
-    self.view:set(self.scene)
+    self:refresh()
 end
 
 function Studio:dirty() return self.history[self.index].data~=self.saved end
@@ -92,8 +114,9 @@ function Studio:undo(step)
     if not self.history[n] then return end
     self.index=n
     self.scene=Wire.decode(self.history[n].data)
-    self.view:set(self.scene)
-    self:select(self.history[n].selected or (self.view.parts[self.selected] and self.selected))
+    self:refresh()
+    local v=self.history[n].selected or self.selected
+    self:select(self.nodes[v] and v or nil)
     self.status=step<0 and "Undid the last edit" or "Redid the last edit"
 end
 
@@ -101,48 +124,109 @@ function Studio:part()
     return self.view.parts[self.selected]
 end
 
-function Studio:add(kind)
+function Studio:add(kind,parent)
     if #self.scene.objects>=400 then self.status="The place already has 400 parts."; return end
     local spec=shapes[kind]
     local spawn=self.scene.spawn
-    local near=self:part()
+    local near=self.view.parts[parent or self.selected]
     local x,y,z=spawn.x+2.5,spawn.y+spec[2][2]*.5,spawn.z
-    if near and near.size[1]<12 then
+    if kind=="spawn" then
+        y=spawn.y+spec[2][2]*.5
+        if near then
+            x,y,z=near.position[1],near.position[2]+(near.size[2]+spec[2][2])*.5,near.position[3]
+        end
+    elseif near and near.size[1]<12 then
         x,y,z=near.position[1]+(near.size[1]+spec[2][1])*.5+.5,near.position[2],near.position[3]
     end
     local part={id=id(),name=spec[1],kind=kind,position={clamp(x,-250,250),clamp(y,-40,250),z},
-        size=copy(spec[2]),rotation={0,0,0},color=spec[3],solid=true}
+        size=copy(spec[2]),rotation={0,0,0},color=spec[3],solid=kind~="spawn",enabled=kind=="spawn" and true or nil,parent=parent}
+    if not Hierarchy.canParent(self.nodes,part,parent) then self.status="This item is nested too deeply.";return end
     self.scene.objects[#self.scene.objects+1]=part
-    self:select(part.id)
+    self.selected=part.id
     self:checkpoint()
     self.query=""
-    self.scroll=math.max(0,#self.scene.objects-7)
+    self:select(part.id)
     self.status="Added "..spec[1]
+end
+
+function Studio:addScript(kind,parent)
+    if #self.scene.scripts>=48 then self.status="A world can hold up to 48 scripts.";return end
+    local node={id=id(),name=scriptNames[kind],kind=kind,parent=parent,enabled=true}
+    if not Hierarchy.canParent(self.nodes,node,parent) then self.status="This item is nested too deeply.";return end
+    node.source=Hierarchy.owner(self.nodes,node) and templates.press or templates.spawn
+    self.scene.scripts[#self.scene.scripts+1]=node
+    self.selected=node.id
+    self.query=""
+    self:checkpoint()
+    self:select(node.id)
+    self:scriptEditor(node)
 end
 
 function Studio:delete()
     if not self.selected then return end
-    for i=#self.scene.objects,1,-1 do if self.scene.objects[i].id==self.selected then table.remove(self.scene.objects,i) end end
-    for i=#self.scene.scripts,1,-1 do if self.scene.scripts[i].part==self.selected then table.remove(self.scene.scripts,i) end end
-    self:select(nil); self:checkpoint()
+    local node=self.nodes[self.selected]
+    local gone={[self.selected]=true}
+    for _,entry in ipairs(Hierarchy.branch(self.children,self.selected)) do gone[entry.node.id]=true end
+    for _,items in ipairs({self.scene.objects,self.scene.scripts}) do
+        for i=#items,1,-1 do if gone[items[i].id] then table.remove(items,i) end end
+    end
+    if gone[self.scene.defaultSpawn] then self.scene.defaultSpawn=nil end
+    self:select(node.parent); self:checkpoint()
+    self.status="Deleted "..node.name
 end
 
 function Studio:duplicate()
-    local part=self:part()
-    if not part or #self.scene.objects>=400 then return end
-    local p=copy(part)
-    p.id=id()
-    p.name=part.name:sub(1,70).." copy"
-    local x=part.position[1]+part.size[1]+.5
-    p.position[1]=clamp(x>250 and part.position[1]-part.size[1]-.5 or x,-250,250)
-    self.scene.objects[#self.scene.objects+1]=p
-    for _,s in ipairs(self.scene.scripts) do
-        if s.part==part.id and #self.scene.scripts<48 then
-            self.scene.scripts[#self.scene.scripts+1]={part=p.id,source=s.source,enabled=s.enabled}
-            break
+    local node=self.nodes[self.selected]
+    if not node then return end
+    local branch=Hierarchy.branch(self.children,node.id)
+    table.insert(branch,1,{node=node})
+    local ids,parts,scripts={},0,0
+    local shiftLow,shiftHigh=-500,500
+    for _,entry in ipairs(branch) do
+        local current=entry.node
+        ids[current.id]=id()
+        if Hierarchy.isScript(current) then scripts=scripts+1
+        else
+            parts=parts+1
+            shiftLow=math.max(shiftLow,-250-current.position[1])
+            shiftHigh=math.min(shiftHigh,250-current.position[1])
         end
     end
-    self:select(p.id);self:checkpoint()
+    if #self.scene.objects+parts>400 or #self.scene.scripts+scripts>48 then
+        self.status="Duplicating this branch would exceed the world limits."
+        return
+    end
+    local dx=node.size and math.min(node.size[1]+.5,8) or 0
+    dx=clamp(dx>shiftHigh and -dx or dx,shiftLow,shiftHigh)
+    for _,entry in ipairs(branch) do
+        local twin=copy(entry.node)
+        twin.id=ids[twin.id]
+        twin.parent=ids[twin.parent] or twin.parent
+        if entry.node==node and #node.name<=75 then twin.name=node.name.." copy" end
+        local list=Hierarchy.isScript(twin) and self.scene.scripts or self.scene.objects
+        if twin.position then twin.position[1]=twin.position[1]+dx end
+        list[#list+1]=twin
+    end
+    self.selected=ids[node.id]
+    self:checkpoint()
+    self:select(self.selected)
+    self.status="Duplicated "..node.name
+end
+
+function Studio:moveNode(node,parent)
+    local possible,depth=Hierarchy.canParent(self.nodes,node,parent)
+    if possible then
+        for _,entry in ipairs(Hierarchy.branch(self.children,node.id)) do
+            if entry.depth+depth>Hierarchy.maxDepth then possible=false;break end
+        end
+    end
+    if not possible then self.status="Choose a parent outside this branch with enough room for its children.";return false end
+    node.parent=parent
+    self:checkpoint()
+    self:select(node.id)
+    local target=parent and self.nodes[parent].name or "Workspace"
+    self.status="Moved "..node.name.." to "..target
+    return true
 end
 
 function Studio:confirmDiscard(action)
@@ -204,12 +288,8 @@ function Studio:library()
     end)
 end
 
-function Studio:scriptEditor()
-    local part=self:part()
-    if not part then return end
-    local found
-    for _,s in ipairs(self.scene.scripts) do if s.part==part.id then found=s; break end end
-    self.modal={kind="script",part=part,source=found and found.source or templates.press,enabled=found==nil or found.enabled}
+function Studio:scriptEditor(node)
+    self.modal={kind="script",node=node,part=Hierarchy.owner(self.nodes,node),source=node.source,enabled=node.enabled}
 end
 
 function Studio:applyScript(checkOnly)
@@ -217,24 +297,16 @@ function Studio:applyScript(checkOnly)
     if self.pending then return end
     self.pending=true
     local source=m.source
-    self.backend:call("script",{source=source},function(value,err)
+    self.backend:call("script",{source=source,kind=m.node.kind,hasPart=m.part~=nil},function(value,err)
         self.pending=false
         if self.modal~=m then return end
         m.error,m.valid=err,value and "Ready to run in playtest." or nil
         if not value or checkOnly then return end
-        local scripts=self.scene.scripts
-        local updated
-        for _,s in ipairs(scripts) do
-            if s.part==m.part.id then s.source,s.enabled=source,m.enabled;updated=true;break end
-        end
-        if not updated then
-            if #scripts>=48 then m.error="A world can hold up to 48 part scripts.";return end
-            scripts[#scripts+1]={part=m.part.id,source=source,enabled=m.enabled}
-        end
+        m.node.source,m.node.enabled=source,m.enabled
         self.modal=nil
         self.ui:blur(true)
         self:checkpoint()
-        self.status="Script attached to "..m.part.name
+        self.status="Updated "..m.node.name
     end)
 end
 
@@ -261,6 +333,7 @@ function Studio:event(e)
     if self.view.playing then
         self.view:state(e)
         if e.scriptError then self.status=e.scriptError end
+        if e.type=="resetResult" then self.status=e.ok and "Character reset" or e.message end
     end
 end
 
@@ -291,48 +364,190 @@ function Studio:property(label,value,x,y,w,commit)
     self.ui:field("property-"..label,value,x,y+14,w,26,{commit=commit})
 end
 
+function Studio:explorer(x,y,w,h,locked)
+    local ui=self.ui
+    ui.rect(C.paper,x,y,w,h)
+    ui.rect(C.panel,x,y,w,32)
+    ui:text("Explorer",x+9,y+8)
+    ui:button("+ Add",x+w-199,y+3,60,26,not locked and function()
+        self.modal={kind="add",node=self.nodes[self.selected]}
+    end or nil,{outline=true})
+    ui:button("Duplicate",x+w-135,y+3,74,26,not locked and self.selected and function() self:duplicate() end or nil)
+    ui:button("Delete",x+w-59,y+3,54,26,not locked and self.selected and function() self:delete() end or nil)
+    self.explorerRows={}
+    self.explorerBottom=y+h
+    if locked then return end
+    ui:field("search",self.query,x+8,y+37,w-16,26,{live=function(v)self.query,self.scroll=v,0 end})
+    if self.query=="" and ui.focus~="search" then ui:text("Find in Explorer",x+14,y+42,C.muted) end
+    local rootY=y+66
+    ui:row("Workspace",x+7,rootY,w-15,23,function()self:select(nil)end,not self.selected)
+    self.explorerRows[1]={x=x+7,y=rootY,w=w-15,h=23}
+    local query=self.query:lower()
+    local visible={}
+    if query~="" then
+        for _,node in pairs(self.nodes) do
+            local name=node.name:lower()
+            local kind=(scriptNames[node.kind] or shapes[node.kind][1]):lower()
+            if name:find(query,1,true) or kind:find(query,1,true) then
+                local ancestor=node
+                while ancestor do
+                    visible[ancestor.id]=true
+                    ancestor=self.nodes[ancestor.parent]
+                end
+            end
+        end
+    end
+    local rows={}
+    local function walk(parent,depth)
+        for _,node in ipairs(self.children[parent] or {}) do
+            if query=="" or visible[node.id] then
+                rows[#rows+1]={node=node,depth=depth}
+                if query~="" or not self.collapsed[node.id] then walk(node.id,depth+1) end
+            end
+        end
+    end
+    walk("",0)
+    local count=math.max(1,math.floor((h-91)/23))
+    if self.reveal then
+        for i,row in ipairs(rows) do
+            if row.node.id==self.reveal then
+                if i<=self.scroll then self.scroll=i-1 end
+                if i>self.scroll+count then self.scroll=i-count end
+                break
+            end
+        end
+        self.reveal=nil
+    end
+    self.scroll=clamp(self.scroll,0,math.max(0,#rows-count))
+    local offset=math.floor(self.scroll)
+    for i=1,count do
+        local entry=rows[offset+i]
+        if not entry then break end
+        local node=entry.node
+        local yy=y+90+(i-1)*23
+        local indent=math.min(8,entry.depth)*13
+        local left=x+7+indent
+        local rect={id=node.id,x=x+7,y=yy,w=w-18,h=22,label=left+19}
+        self.explorerRows[#self.explorerRows+1]=rect
+        ui:row("",rect.x,yy,rect.w,rect.h,function()self:select(node.id,false)end,self.selected==node.id)
+        if self.children[node.id] and query=="" then
+            ui:button("",left,yy,19,22,function()
+                self.collapsed[node.id]=not self.collapsed[node.id]
+            end)
+            G.setColor(C.muted)
+            if self.collapsed[node.id] then G.polygon("fill",left+7,yy+7,left+12,yy+11,left+7,yy+15)
+            else G.polygon("fill",left+6,yy+9,left+14,yy+9,left+10,yy+14) end
+        end
+        local marker=node.kind=="local" and "LS" or node.kind=="script" and "S" or node.kind=="spawn" and "SP"
+        if marker then ui:text(marker,left+20,yy+5,C.muted,ui.small)
+        else ui.line(C.muted,left+22,yy+7,8,8,1) end
+        G.setScissor(left+42,yy,math.max(0,x+w-14-(left+42)),22)
+        ui:text(node.name,left+42,yy+3,node.enabled==false and C.muted or C.ink)
+        G.setScissor()
+    end
+    if #rows>count then
+        local dy=(h-96)*offset/#rows
+        ui.rect(C.edge,x+w-7,y+92+dy,3,math.max(12,(h-96)*count/#rows),1)
+    end
+    if self.dragNode and self.dragNode.active then
+        local mx,my=love.mouse.getPosition()
+        local target=self:explorerHit(mx,my)
+        local node=self.nodes[self.dragNode.id]
+        if target and node and Hierarchy.canParent(self.nodes,node,target.id) then
+            ui.line(C.green,target.x,target.y,target.w,target.h,3)
+        end
+    end
+end
+
+function Studio:explorerHit(x,y)
+    for _,row in ipairs(self.explorerRows or {}) do
+        if x>=row.x and x<row.x+row.w and y>=row.y and y<row.y+row.h then return row end
+    end
+end
+
 function Studio:inspector(x,y,w,h,locked)
     local ui=self.ui
     local o=self:part()
+    local node=self.nodes[self.selected]
+    local script=node and not o and node
+    local title=script and scriptNames[script.kind] or o and (o.kind=="spawn" and "Spawn Point" or "Part properties") or "World settings"
     ui.rect(C.paper,x,y,w,h)
     ui.rect(C.panel,x,y,w,32)
-    ui:text(o and "Part properties" or "Place properties",x+9,y+7)
+    ui:text(title,x+9,y+7)
     if locked then return end
-    local row=y+45
-    self:property("Name",o and o.name or self.scene.name,x+9,row,w-18,function(v)
-        if v:match("%S") and #v<=80 then (o or self.scene).name=v;self:checkpoint() end
+    if node then
+        ui:button("Move to…",x+w-81,y+3,73,25,function()self.modal={kind="move",node=node,offset=0}end)
+    end
+    local row=y+39
+    self:property("Name",node and node.name or self.scene.name,x+9,row,w-18,function(v)
+        if v:match("%S") and #v<=80 and not v:find("%c") then (node or self.scene).name=v;self:checkpoint() end
     end)
-    row=row+51
+    row=row+47
+    if script then
+        ui:button("Edit source",x+9,row,104,30,function()self:scriptEditor(script)end,{primary=true})
+        ui:button(script.enabled and "Enabled" or "Disabled",x+121,row,99,30,function()
+            script.enabled=not script.enabled; self:checkpoint()
+        end,{outline=true})
+        local parent=self.nodes[script.parent]
+        ui:text("Parent   "..(parent and parent.name or "Workspace"),x+9,row+47,C.muted,ui.small,w-18)
+        return
+    end
     local vectors=o and {{"Position","position",-250,250},{"Rotation (degrees)","rotation",-180,180},{"Size","size",.1,128}}
-        or {{"Spawn position","spawn",-250,250}}
+        or {{"Fallback spawn position","spawn",-250,250}}
     for _,field in ipairs(vectors) do
         ui:text(field[1],x+9,row,C.muted,ui.small)
+        ui:text("X / Y / Z",x+w-57,row,C.muted,ui.small)
         local col=(w-30)/3
         for i,axis in ipairs({"x","y","z"}) do
             local xx=x+9+(i-1)*(col+6)
             local values=o and o[field[2]] or self.scene.spawn
             local key=o and i or axis
-            ui:field("value-"..field[2]..axis,("%.3g"):format(values[key]),xx,row+16,col,24,{commit=function(v)
+            ui:field("value-"..field[2]..axis,("%.3g"):format(values[key]),xx,row+15,col,23,{commit=function(v)
                 local number=tonumber(v)
                 if number and number==number then
                     local low=(i==2 and (field[2]=="position" or field[2]=="spawn")) and -40 or field[3]
                     values[key]=clamp(number,low,field[4]);self:checkpoint()
                 end
             end})
-            ui:text(axis:upper(),xx+3,row+42,C.muted,ui.small)
         end
-        row=row+62
+        row=row+48
     end
     if o then
-        self:property("Color",o.color,x+9,row,math.max(72,w-146),function(v)
-            if v:match("^#%x%x%x%x%x%x$") then o.color=v:lower();self:checkpoint() end
-        end)
-        ui:button(o.solid and "Solid" or "No collision",x+w-109,row+14,98,26,function()o.solid=not o.solid;self:checkpoint()end,{outline=true})
-        row=row+47
-        local hasScript
-        for _,s in ipairs(self.scene.scripts) do if s.part==o.id then hasScript=true; break end end
-        ui:button(hasScript and "Edit script" or "Add script",x+9,row,110,28,function()self:scriptEditor() end,{outline=true})
+        if o.kind=="spawn" then
+            ui:button(o.enabled and "Spawn enabled" or "Spawn disabled",x+9,row,115,26,function()
+                o.enabled=not o.enabled
+                if not o.enabled and self.scene.defaultSpawn==o.id then self.scene.defaultSpawn=nil end
+                self:checkpoint()
+            end,{outline=true})
+            local preferred=self.scene.defaultSpawn==o.id
+            ui:button(preferred and "Default spawn" or "Make default",x+130,row,113,26,o.enabled and function()
+                if preferred then self.scene.defaultSpawn=nil else self.scene.defaultSpawn=o.id end
+                self:checkpoint()
+            end or nil,{selected=preferred,outline=true})
+            row=row+33
+        else
+            self:property("Color",o.color,x+9,row,math.max(72,w-146),function(v)
+                if v:match("^#%x%x%x%x%x%x$") then o.color=v:lower();self:checkpoint() end
+            end)
+            ui:button(o.solid and "Solid" or "No collision",x+w-109,row+14,98,26,function()o.solid=not o.solid;self:checkpoint()end,{outline=true})
+            row=row+46
+        end
+        local first
+        for _,child in ipairs(self.children[o.id] or {}) do if Hierarchy.isScript(child) then first=child;break end end
+        ui:button(first and "Edit script" or "Add Script",x+9,row,110,28,function()
+            if first then self:select(first.id);self:scriptEditor(first) else self:addScript("script",o.id) end
+        end,{outline=true})
         ui:button("Copy part ID",x+125,row,103,28,function() love.system.setClipboardText(o.id); self.status="Part ID copied." end,{outline=true})
+    else
+        local allowed=self.scene.allowReset
+        ui:text("Character reset",x+9,row,C.muted,ui.small)
+        ui:button(allowed and "Allowed" or "Disabled",x+9,row+16,104,28,function()
+            self.scene.allowReset=not allowed
+            self:checkpoint()
+        end,{outline=true})
+        row=row+62
+        local preferred=self.nodes[self.scene.defaultSpawn]
+        ui:text(preferred and ("Default spawn   "..preferred.name) or "Spawn selection   Automatic",x+9,row,C.muted,ui.small,w-18)
     end
 end
 
@@ -357,7 +572,7 @@ function Studio:draw()
     local buttons={{"New",function()self:confirmDiscard(function()self:set(blank())end)end},
         {"Open",function()self:open()end},{"Save",function()self:save(self.file)end},{"Save as",function()self:save(nil)end},
         {"Undo",function()self:undo(-1)end},{"Redo",function()self:undo(1)end},
-        {"Box",function()self:add("box")end},{"Sphere",function()self:add("sphere")end},{"Cylinder",function()self:add("cylinder")end}}
+        {"Box",function()self:add("box")end},{"Sphere",function()self:add("sphere")end},{"Cylinder",function()self:add("cylinder")end},{"Spawn Point",function()self:add("spawn")end}}
     for _,b in ipairs(buttons) do
         local width=ui.font:getWidth(b[1])+19
         ui:button(b[1],x,47,width,28,not locked and b[2] or nil)
@@ -398,32 +613,13 @@ function Studio:draw()
         ui:text("E  Activate "..(part and part.name or "part"),20,H-92)
     end
     local y=117
-    local top=math.floor((H-143)*.33)
+    local top=math.min(math.floor((H-143)*.41),H-143-340)
     ui.rect(C.edge,panel-5,y,5,H-143)
-    ui.rect(C.paper,panel,y,self.pane,H-143)
-    ui.rect(C.panel,panel,y,self.pane,31)
-    ui:text("Outliner",panel+9,y+7)
-    ui:button("Duplicate",W-146,y+3,78,25,not locked and self:part() and function()self:duplicate()end or nil)
-    ui:button("Delete",W-64,y+3,56,25,not locked and self:part() and function()self:delete()end or nil)
-    if not locked then
-        ui:field("search",self.query,panel+8,y+37,self.pane-16,26,{live=function(v)self.query,self.scroll=v,0 end})
-        if self.query=="" and ui.focus~="search" then ui:text("Find a part",panel+14,y+42,C.muted) end
-        ui:row(self.scene.name,panel+7,y+68,self.pane-14,24,function()self:select(nil)end,not self.selected)
-        local matches={}
-        for _,part in ipairs(self.scene.objects) do
-            if part.name:lower():find(self.query:lower(),1,true) then matches[#matches+1]=part end
-        end
-        local count=math.max(1,math.floor((top-94)/23))
-        self.scroll=clamp(self.scroll,0,math.max(0,#matches-count))
-        for i=1,count do
-            local part=matches[self.scroll+i]
-            if not part then break end
-            ui:row("  "..part.name,panel+7,y+92+(i-1)*23,self.pane-14,22,function()self:select(part.id)end,self.selected==part.id)
-        end
-    end
+    self:explorer(panel,y,self.pane,top,locked)
     self:inspector(panel,y+top,self.pane,H-y-top-26,locked)
     ui.rect(C.paper,0,H-51,panel-5,25)
-    ui:text(self.view.playing and "WASD move    Space jump    Drag look    E interact    Esc return"
+    local reset=self.view.allowReset and "    F6 reset" or ""
+    ui:text(self.view.playing and ("WASD move    Space jump    Drag look    E interact"..reset.."    Esc return")
         or "Q select  W move  E rotate  R scale  F frame    Right drag to fly    Scroll to zoom",10,H-46,C.muted,ui.small)
     ui.rect(C.panel,0,H-26,W,26)
     ui.line(C.edge,0,H-26,W,26)
@@ -437,17 +633,66 @@ function Studio:drawModal()
     local W,H=G.getDimensions()
     if m.kind=="script" then
         local w,h=math.min(W-38,760),math.min(H-32,590)
-        local x,y=ui:modal("Script on "..m.part.name,w,h)
+        local x,y=ui:modal("Edit "..scriptNames[m.node.kind].." · "..m.node.name,w,h)
         ui:text("Lua / Luau",x+17,y+42,C.muted,ui.small)
-        ui:button("Press example",x+110,y+36,106,28,function()ui:blur(true);m.source=templates.press end,{outline=true})
-        ui:button("Touch example",x+222,y+36,108,28,function()ui:blur(true);m.source=templates.touch end,{outline=true})
+        ui:button("Press example",x+110,y+36,106,28,m.part and function()ui:blur(true);m.source=templates.press end or nil,{outline=true})
+        ui:button("Touch example",x+222,y+36,108,28,m.part and function()ui:blur(true);m.source=templates.touch end or nil,{outline=true})
+        ui:button("Spawn example",x+336,y+36,112,28,function()ui:blur(true);m.source=templates.spawn end,{outline=true})
         ui:button(m.enabled and "Enabled" or "Disabled",x+w-105,y+36,88,28,function()m.enabled=not m.enabled end,{outline=true})
         ui:field("script",m.source,x+15,y+70,w-30,h-175,{multi=true,limit=4096,live=function(value)m.source=value;m.error=nil;m.valid=nil end})
-        ui:text("Pot.onPress    Pot.onTouch    Pot.pulse    Pot.setColor    Pot.setSolid    Pot.setVisible    Pot.after",x+15,y+h-98,C.muted,ui.small,w-30)
-        ui:text(m.error or m.valid or "Use \"self\" for this part or copy a target's ID from Properties.",x+15,y+h-75,m.error and C.error or C.muted,ui.small,w-30)
+        local api=m.node.kind=="local" and "Pot.onSpawn    Pot.onPress    Pot.onTouch    Pot.pulse    Pot.setColor    Pot.after"
+            or "Pot.onSpawn    Pot.spawn    Pot.onPress    Pot.onTouch    Pot.pulse    Pot.setSolid    Pot.after"
+        ui:text(api,x+15,y+h-98,C.muted,ui.small,w-30)
+        local help=m.part and 'Use "self" for '..m.part.name.." or copy a target's ID from Properties."
+            or "Use a part ID to target objects from Workspace."
+        ui:text(m.error or m.valid or help,x+15,y+h-75,m.error and C.error or C.muted,ui.small,w-30)
         ui:button("Cancel",x+14,y+h-43,82,29,function()self.modal=nil end,{outline=true})
         ui:button("Check script",x+w-225,y+h-43,105,29,function()self:applyScript(true)end,{outline=true})
         ui:button("Apply",x+w-112,y+h-43,96,29,function()self:applyScript(false)end,{primary=true})
+    elseif m.kind=="add" then
+        local hasParts=not m.node or not Hierarchy.isScript(m.node)
+        local h=hasParts and 222 or 132
+        local x,y=ui:modal("Add to "..(m.node and m.node.name or "Workspace"),390,h)
+        local parent=m.node and m.node.id
+        local row=y+51
+        if hasParts then
+            for i,kind in ipairs({"box","sphere","cylinder","spawn"}) do
+                local bx=x+15+((i-1)%2)*184
+                local by=row+math.floor((i-1)/2)*37
+                ui:button(shapes[kind][1],bx,by,176,31,function() self.modal=nil; self:add(kind,parent) end,{outline=true})
+            end
+            row=row+83
+        end
+        ui:button("Script",x+15,row,176,31,function() self.modal=nil; self:addScript("script",parent) end,{outline=true})
+        ui:button("Local Script",x+199,row,176,31,function() self.modal=nil; self:addScript("local",parent) end,{outline=true})
+        ui:button("Cancel",x+298,y+h-38,77,26,function()self.modal=nil end)
+    elseif m.kind=="move" then
+        local w,h=460,math.min(448,H-70)
+        local x,y=ui:modal("Move "..m.node.name,w,h)
+        ui:text("Choose a new parent",x+15,y+45,C.muted,ui.small)
+        local choices={{name="Workspace",depth=0}}
+        for _,entry in ipairs(Hierarchy.branch(self.children,"")) do
+            if Hierarchy.canParent(self.nodes,m.node,entry.node.id) then
+                choices[#choices+1]={name=entry.node.name,id=entry.node.id,depth=entry.depth}
+            end
+        end
+        local count=math.floor((h-121)/25)
+        local max=math.max(0,#choices-count)
+        m.offset=clamp(m.offset,0,max)
+        for i=1,count do
+            local choice=choices[math.floor(m.offset)+i]
+            if not choice then break end
+            local label=string.rep("  ",math.min(choice.depth,8))..choice.name
+            ui:row(label,x+13,y+69+(i-1)*25,w-26,24,function()
+                if self:moveNode(m.node,choice.id) then self.modal=nil else m.error=self.status end
+            end,choice.id==m.node.parent)
+        end
+        if m.error then ui:text(m.error,x+15,y+h-55,C.error,ui.small,w-30) end
+        if max>0 then
+            ui:button("Up",x+15,y+h-35,38,25,function()m.offset=math.max(0,m.offset-4)end,{outline=true})
+            ui:button("Down",x+59,y+h-35,49,25,function()m.offset=math.min(max,m.offset+4)end,{outline=true})
+        end
+        ui:button("Cancel",x+w-98,y+h-37,83,27,function()self.modal=nil end,{outline=true})
     elseif m.kind=="published" then
         local w,h=560,math.min(450,H-60)
         local x,y=ui:modal("Published worlds",w,h)
@@ -510,7 +755,13 @@ function Studio:drawModal()
 end
 
 function Studio:mousepressed(x,y,b)
-    if b==1 and self.ui:click(x,y) then return end
+    if b==1 then
+        local row=not self.modal and self:explorerHit(x,y)
+        if self.ui:click(x,y) then
+            if row and row.id and self.selected==row.id and x>=row.label then self.dragNode={id=row.id,x=x,y=y} end
+            return
+        end
+    end
     if self.modal then return end
     local W=G.getWidth()
     if b==1 and y>117 and math.abs(x-(W-self.pane-3))<5 and not self.view.playing then self.resizing=true;return end
@@ -518,22 +769,31 @@ function Studio:mousepressed(x,y,b)
 end
 function Studio:mousemoved(x,y,dx,dy)
     if self.resizing then self.pane=clamp(G.getWidth()-x,264,430)
+    elseif self.dragNode then
+        if math.abs(self.dragNode.x-x)+math.abs(self.dragNode.y-y)>7 then self.dragNode.active=true end
     else self.view:mousemoved(x,y,dx,dy) end
 end
 function Studio:mousereleased(x,y)
     self.resizing=false
+    if self.dragNode then
+        local drag=self.dragNode
+        self.dragNode=nil
+        local target=drag.active and self:explorerHit(x,y)
+        if target and target.id~=drag.id then self:moveNode(self.nodes[drag.id],target.id) end
+        return
+    end
     self.view:mousereleased(x,y)
 end
 function Studio:wheelmoved(dx,dy)
     if self.modal then self.modal.offset=math.max(0,(self.modal.offset or 0)-dy*2);return end
     local x,y=love.mouse.getPosition()
     if self.view:area(x,y) then self.view:wheel(dy)
-    else self.scroll=math.max(0,self.scroll-dy*3) end
+    elseif y>=117 and y<self.explorerBottom then self.scroll=math.max(0,self.scroll-dy*3) end
 end
 function Studio:textinput(value) self.ui:insert(value) end
 function Studio:filedropped(file) self:open(file:getFilename()) end
 function Studio:focus(held)
-    if not held then self.view:cancel() end
+    if not held then self.dragNode=nil; self.view:cancel() end
 end
 function Studio:keypressed(key,_,repeatKey)
     local command=love.keyboard.isDown("lctrl","rctrl","lgui","rgui")
@@ -545,10 +805,12 @@ function Studio:keypressed(key,_,repeatKey)
     end
     if self.ui:key(key) or repeatKey then return end
     if self.modal then if key=="escape" then self.modal=nil end;return end
+    if key=="escape" and self.dragNode then self.dragNode=nil;return end
     if key=="escape" and self.view:cancel() then return end
     if key=="f5" or (self.view.playing and key=="escape") then self:play();return end
     if self.view.playing then
         if key=="space" then self.jump=self.jump+1
+        elseif key=="f6" and self.view.allowReset then self.backend:call("reset",{})
         elseif key=="e" then self:press(self.view.interaction) end
         return
     end

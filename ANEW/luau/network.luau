@@ -102,6 +102,7 @@ function Network.remote(url,read,write)
             assert(value.id==id,"The service returned a different world.")
             return value
         end,
+        spawns=function(id) return action("GET","/v3/worlds/"..check(id).."/spawns",read) end,
         preview=function(id) return action("GET","/v3/worlds/"..check(id).."/thumbnail",read,nil,"image/png") end,
         managed=function() return list(token(),"/v3/published") end,
         published=function(id)
@@ -121,7 +122,8 @@ function Network.remote(url,read,write)
             local ok,welcome=pcall(function()
                 ws:send(Wire.encode({type="join",world=id,credential=read or ""}),true)
                 local e=Wire.decode(Network.within(6,function() return ws:next() end),2048)
-                assert(e.type=="welcome" and Place.id(e.id),"The server did not start a Pot session.")
+                assert(e.type=="welcome" and Place.id(e.id) and (e.allowReset==nil or type(e.allowReset)=="boolean"),
+                    "The server did not start a Pot session.")
                 return e
             end)
             if not ok then close(ws); error("Session access denied or unavailable.",0) end
@@ -194,6 +196,7 @@ function Network.serve(store,options)
         local managed=path:match("^/v3/published/([a-z0-9%-]+)$")
         local id=path:match("^/v3/worlds/([a-z0-9%-]+)$")
         local image=path:match("^/v3/worlds/([a-z0-9%-]+)/thumbnail$")
+        local spawns=path:match("^/v3/worlds/([a-z0-9%-]+)/spawns$")
         if managed and method=="GET" then
             if not writer(key) then return fail(401,"Publishing access is required.") end
             local p=store.published(managed)
@@ -214,10 +217,11 @@ function Network.serve(store,options)
             reload(id)
             return reply(200,result)
         end
-        if method=="GET" and (id or image) then
+        if method=="GET" and (id or image or spawns) then
             if not reader(key) then return fail(401,"Access denied.") end
-            local p=store.load(id or image)
+            local p=store.load(id or image or spawns)
             if not p then return fail(404,"World not found.") end
+            if spawns then return reply(200,Place.spawnInfo(p)) end
             return if id then reply(200,p) else reply(200,preview(p),"image/png")
         end
         return fail(404,"Unknown Pot route.")
@@ -242,7 +246,7 @@ function Network.serve(store,options)
             assert(r.n<24)
             p=Room.add(r.sim)
             r.n+=1
-            socket:send(Wire.encode({type="welcome",id=p.id}),true)
+            socket:send(Wire.encode({type="welcome",id=p.id,allowReset=r.sim.allowReset}),true)
             r.peers[socket]={busy=false}
             local budget,last=40,os.clock()
             while rooms[id]==r do
@@ -255,6 +259,9 @@ function Network.serve(store,options)
                 if budget<1 then break end
                 budget-=1
                 if packet.type=="press" then Room.press(r.sim,p,packet.part)
+                elseif packet.type=="reset" then
+                    local ok,message=Room.reset(r.sim,p)
+                    socket:send(Wire.encode({type="resetResult",ok=ok,message=message}),true)
                 elseif packet.type~="input" or not Room.input(r.sim,p,packet) then break end
             end
         end)

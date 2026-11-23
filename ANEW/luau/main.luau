@@ -69,41 +69,58 @@ local function desktop()
         end
         return table.concat(chunks)
     end
+    local function emitState(session,state)
+        if session.localRoom then
+            session.snapshot=state
+            Room.observe(session.localRoom,state,session.id)
+            state=Room.present(session.localRoom,state,session.id)
+        end
+        send({event=state})
+    end
     local function localSession(p)
         assert(p,"World not found.")
         local r=Room.create(p)
         local actor=Room.add(r)
+        local session={room=r,player=actor,id=actor.id,localRoom=Room.create(p,true)}
         stop()
-        current={room=r,player=actor}
-        send({event={type="welcome",id=actor.id}})
+        current=session
+        send({event={type="welcome",id=actor.id,allowReset=r.allowReset}})
         Room.step(r)
-        send({event=Room.snapshot(r)})
+        emitState(session,Room.snapshot(r))
         return true
     end
-    local function remoteSession(id)
+    local function remoteSession(service,id,place)
+        local localRoom=Room.create(place,true)
         stop()
         local anchor={}
         current=anchor
-        local session=remote.join(id)
+        local session=service.join(id)
         if current~=anchor then session.socket:close(); return false end
+        session.id,session.localRoom=session.welcome.id,localRoom
         current=session
         send({event=session.welcome})
         task.spawn(function()
             pcall(function()
                 while alive and current==session do
                     local raw=Network.within(15,function() return session.socket:next() end)
-                    if not raw then break end
+                    if not raw or current~=session then break end
                     local e=Wire.decode(raw,64*1024)
                     if e.type=="state" and type(e.players)=="table" and #e.players<=24 and type(e.effects)=="table" and #e.effects<=400 then
                         for _,p in ipairs(e.players) do
-                            assert(Place.id(p.id) and #p.name<=80 and Place.color(p.color)
+                            assert(Place.id(p.id) and type(p.name)=="string" and #p.name<=80 and utf8.len(p.name) and Place.color(p.color)
                                 and Place.number(p.x,-320,320) and Place.number(p.y,-40,390)
-                                and Place.number(p.z,-320,320) and Place.number(p.yaw,-math.pi,math.pi))
+                                and Place.number(p.z,-320,320) and Place.number(p.yaw,-math.pi,math.pi)
+                                and (p.life==nil or Place.number(p.life,0,4294967295))
+                                and (p.arrivals==nil or Place.number(p.arrivals,0,4294967295))
+                                and (p.interaction==nil or Place.id(p.interaction)))
                         end
                         for _,fx in ipairs(e.effects) do
                             assert(Place.id(fx.id) and Place.color(fx.color) and type(fx.solid)=="boolean"
                                 and type(fx.visible)=="boolean" and (not fx.pulse or Place.color(fx.pulse)))
                         end
+                        emitState(session,e)
+                    elseif e.type=="resetResult" and type(e.ok)=="boolean"
+                        and (e.message==nil or (type(e.message)=="string" and #e.message<=240)) then
                         send({event=e})
                     end
                 end
@@ -119,6 +136,17 @@ local function desktop()
         assert(Place.id(id),"Invalid world ID.")
         return assert(if remote then remote.load(id) else store.load(id),"World not found.")
     end
+    local localHost
+    local function localNetwork()
+        local port=tonumber(env.POT_LOCAL_SESSION_PORT or "4832")
+        assert(Place.number(port,1024,65535) and port%1==0,"Invalid local session port.")
+        if not localHost then
+            -- The first client hosts loopback. Additional clients reuse that listener.
+            local ok,service=pcall(Network.serve,store,{host="127.0.0.1",port=port})
+            if ok then localHost=service end
+        end
+        return Network.remote("http://127.0.0.1:"..port)
+    end
     local function act(c)
         local a,id=c.action,c.world
         if a=="mode" then return networkMode
@@ -132,21 +160,37 @@ local function desktop()
         elseif a=="published" then return if remote then remote.managed() else store.list(true)
         elseif a=="openPublished" then return assert(if remote then remote.published(id) else store.published(id),"Published world not found.")
         elseif a=="unpublish" then return if remote then remote.remove(id) else store.remove(id)
-        elseif a=="script" then Script.compile(c.source); return true
-        elseif a=="solo" then return localSession(ownLoad(id))
+        elseif a=="script" then Script.compile(c.source,c.kind,c.hasPart); return true
+        elseif a=="solo" then return localSession(if c.scene then Place.validate(c.scene) else ownLoad(id))
         elseif a=="playtest" then return localSession(Place.validate(c.scene))
-        elseif a=="join" then return if remote then remoteSession(id) else localSession(ownLoad(id))
+        elseif a=="join" then return remoteSession(remote or localNetwork(),id,ownLoad(id))
         else error("Unknown Pot action.",0) end
     end
     local function input(c)
         local s=current
-        if not s then return end
+        if not s then
+            if c.action=="reset" then send({event={type="resetResult",ok=false,message="No active session."}}) end
+            return
+        end
+        if c.action=="press" and s.localRoom then Room.press(s.localRoom,s.localRoom.player,c.part) end
         if s.room then
             if c.action=="input" then Room.input(s.room,s.player,c.input)
-            else Room.press(s.room,s.player,c.part) end
+            elseif c.action=="press" then Room.press(s.room,s.player,c.part)
+            else
+                local ok,message=Room.reset(s.room,s.player)
+                send({event={type="resetResult",ok=ok,message=message}})
+            end
         elseif s.socket then
             if c.action=="press" then
                 task.defer(function() pcall(function() s.socket:send(Wire.encode({type="press",part=c.part}),true) end) end)
+            elseif c.action=="reset" then
+                if s.welcome.allowReset==true then
+                    task.defer(function()
+                        if not pcall(function() s.socket:send(Wire.encode({type="reset"}),true) end) and current==s then
+                            send({event={type="resetResult",ok=false,message="The session could not reset your character."}})
+                        end
+                    end)
+                else send({event={type="resetResult",ok=false,message="Character reset is unavailable in this session."}}) end
             elseif type(c.input)=="table" then
                 s.input=c.input
                 if not s.sending then
@@ -174,10 +218,16 @@ local function desktop()
             while elapsed>=1/60 do
                 elapsed-=1/60
                 ticks+=1
-                if current and current.room then
-                    local r=current.room
-                    Room.step(r)
-                    if ticks%3==0 and (r.dirty or ticks%60==0) then send({event=Room.snapshot(r)}) end
+                local s=current
+                if s then
+                    if s.localRoom then Room.advance(s.localRoom) end
+                    if s.room then
+                        Room.step(s.room)
+                        if ticks%3==0 and (s.room.dirty or ticks%60==0) then emitState(s,Room.snapshot(s.room)) end
+                    end
+                    if s.localRoom and s.localRoom.dirty and s.snapshot then
+                        send({event=Room.present(s.localRoom,s.snapshot,s.id)})
+                    end
                 end
             end
         end
@@ -189,7 +239,7 @@ local function desktop()
         local body=exact(Wire.size(header))
         if not body then break end
         local c=Wire.decode(body)
-        if c.action=="input" or c.action=="press" then input(c)
+        if c.action=="input" or c.action=="press" or c.action=="reset" then input(c)
         elseif c.action=="leave" then stop(); if c.id then send({id=c.id,value=true}) end
         elseif pending<12 then
             pending+=1
@@ -203,6 +253,7 @@ local function desktop()
     end
     alive=false
     stop()
+    if localHost then localHost:stop() end
     stream:close()
     process.exit(0)
 end
