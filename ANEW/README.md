@@ -83,7 +83,7 @@ Set `POT_API_ENDPOINT` in the desktop process environment to connect the apps to
 | World service to PRS | Set `POT_RENDER_ENDPOINT` and `POT_RENDER_TOKEN` to use separate PRS. By default the world service starts its own private renderer. |
 | Separate PRS | `POT_RENDER_HOST` and `POT_RENDER_PORT` default to `127.0.0.1:4812`. A non-loopback listener requires `POT_RENDER_TOKEN`. |
 
-For a Go-only deployment, build from `ANEW/native` with `go build -o potd ./cmd/potd`, then run `potd worlds` or `potd render`. Serve HTTPS and WSS through your proxy outside loopback. Keep PRS private and back up the world directory. A world service maintains its active rooms in memory.
+For a Go-only deployment, build from `ANEW/native` with `go build -buildvcs=false -o potd ./cmd/potd`, then run `potd worlds` or `potd render`. Serve HTTPS and WSS through your proxy outside loopback. Keep PRS private and back up the world directory. A world service maintains its active rooms in memory.
 
 | Route | Operation |
 | --- | --- |

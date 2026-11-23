@@ -18,7 +18,7 @@ export function buildNative(platform = process.platform, arch = process.arch, de
   const output = destination ?? join(project, '.native', `${platform}-${arch}`, executable(platform));
   mkdirSync(dirname(output), { recursive: true });
   const result = spawnSync(process.env.POT_GO_BIN || 'go', [
-    'build', '-trimpath', '-ldflags=-s -w', '-o', output, './cmd/potd',
+    'build', '-trimpath', '-buildvcs=false', '-ldflags=-s -w', '-o', output, './cmd/potd',
   ], {
     cwd: join(project, 'native'),
     stdio: 'inherit',
