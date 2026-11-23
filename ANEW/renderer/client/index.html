@@ -6,11 +6,16 @@
   <meta name="color-scheme" content="light">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'">
   <title>Pot Client</title>
+  <link rel="stylesheet" href="../common/shell.css">
   <link rel="stylesheet" href="./styles.css">
   <script type="module" src="./main.js"></script>
 </head>
 <body>
-  <svg class="icon-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <svg class="icon-sheet" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="icon-mark" viewBox="0 0 24 24">
+      <path d="M5 8h14l-1.8 11H6.8L5 8Zm-1-4h16v2H4Z" fill="currentColor" stroke="none"/>
+      <path d="M11 12h2v2h-2Z" fill="var(--green)" stroke="none"/>
+    </symbol>
     <symbol id="icon-grid" viewBox="0 0 24 24">
       <rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1.35"/>
       <rect x="14" y="3.5" width="6.5" height="6.5" rx="1.35"/>
@@ -44,27 +49,25 @@
   </svg>
 
   <div class="app-shell">
-    <aside class="sidebar" aria-label="Application">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true"><span></span></div>
-        <span>Pot Client</span>
+    <header class="appbar">
+      <div class="product-brand">
+        <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#icon-mark"></use></svg></span>
+        <strong>Pot Client</strong>
       </div>
       <nav aria-label="Main">
-        <button id="worlds-nav" class="nav-button active" type="button" aria-current="page">
-          <svg class="icon" aria-hidden="true"><use href="#icon-grid"></use></svg>
-          <span>Worlds</span>
+        <button id="worlds-nav" class="tool-button" type="button" aria-current="page">
+          <svg class="icon" aria-hidden="true"><use href="#icon-grid"></use></svg>Worlds
         </button>
       </nav>
-      <button id="controls-nav" class="nav-button controls-button" type="button">
-        <svg class="icon" aria-hidden="true"><use href="#icon-keyboard"></use></svg>
-        <span>Controls</span>
+      <button id="controls-nav" class="tool-button controls-button" type="button">
+        <svg class="icon" aria-hidden="true"><use href="#icon-keyboard"></use></svg>Controls
       </button>
-    </aside>
+    </header>
 
     <main class="main-panel">
       <section id="library" class="library" aria-labelledby="library-title">
         <header class="page-heading">
-          <h1 id="library-title">Worlds</h1>
+          <h1 id="library-title">World library</h1>
           <span id="library-status" class="status" data-state="working" role="status">
             <span class="status-dot" aria-hidden="true"></span>
             <span id="library-status-text">Loading worlds</span>
@@ -72,11 +75,23 @@
         </header>
         <div id="library-error" class="error-box" hidden>
           <p id="library-error-text" role="alert"></p>
-          <button id="retry" class="button secondary" type="button">Retry</button>
+          <button id="retry" class="button" type="button">Retry</button>
         </div>
 
         <div id="library-content" hidden>
+          <section class="worlds" aria-label="Choose a world">
+            <label class="search" id="search-box">
+              <svg class="icon" aria-hidden="true"><use href="#icon-search"></use></svg>
+              <input id="world-search" type="search" aria-label="Find a world" placeholder="Find a world">
+            </label>
+            <p id="empty-search" class="empty-state" hidden>No worlds match your search.</p>
+            <div id="world-cards" class="world-cards"></div>
+          </section>
+
           <section class="feature" aria-labelledby="feature-title">
+            <div class="feature-preview world-preview">
+              <img id="feature-thumbnail" alt="" hidden decoding="async">
+            </div>
             <div class="feature-copy">
               <h2 id="feature-title"></h2>
               <p id="feature-description"></p>
@@ -84,27 +99,12 @@
                 <button id="play-solo" class="button primary" type="button">
                   <svg class="icon" aria-hidden="true"><use href="#icon-play"></use></svg>Play solo
                 </button>
-                <button id="join-online" class="button secondary" type="button">
+                <button id="join-online" class="button" type="button">
                   <svg class="icon" aria-hidden="true"><use href="#icon-players"></use></svg><span id="join-label">Join local</span>
                 </button>
               </div>
               <p id="launch-status" class="launch-status" role="status" hidden></p>
             </div>
-            <div class="feature-preview world-preview">
-              <img id="feature-thumbnail" alt="" hidden decoding="async">
-            </div>
-          </section>
-
-          <section class="worlds" aria-labelledby="worlds-title">
-            <header class="worlds-heading">
-              <h2 id="worlds-title">World library</h2>
-              <label class="search" id="search-box" hidden>
-                <svg class="icon" aria-hidden="true"><use href="#icon-search"></use></svg>
-                <input id="world-search" type="search" aria-label="Search worlds" placeholder="Search worlds">
-              </label>
-            </header>
-            <p id="empty-search" class="empty-state" hidden>No worlds match your search.</p>
-            <div id="world-cards" class="world-cards"></div>
           </section>
         </div>
       </section>
@@ -125,7 +125,7 @@
 
         <div id="game-content" class="game-content">
           <div class="stage">
-            <div id="canvas-slot" class="canvas-slot"></div>
+            <div id="canvas-slot" class="canvas-slot"><canvas id="world-canvas" class="world-canvas" tabindex="0" aria-label="Play area"></canvas></div>
             <p id="play-error" class="play-error" role="alert" hidden></p>
           </div>
           <aside id="players-panel" class="players-panel" aria-labelledby="players-title" hidden>

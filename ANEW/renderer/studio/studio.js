@@ -1,4 +1,4 @@
-import { createScene, starterWorlds, validateScene } from '../../shared/scene.mjs'
+import { createScene, validateScene } from '../../shared/scene.mjs'
 import { createViewport } from '../common/viewport.js'
 
 const axes = ['x', 'y', 'z']
@@ -12,19 +12,26 @@ const desktop = window.pot
 const byId = (id) => document.getElementById(id)
 const objectList = byId('object-list')
 const inspector = byId('inspector-body')
+const canvas = byId('viewport')
+const search = byId('object-search')
+const modeButtons = [...document.querySelectorAll('[data-mode]')]
+const snapInputs = ['snap', 'snap-distance', 'snap-angle', 'axes-space'].map(byId)
 const dialog = byId('unsaved-dialog')
 const actionButtons = new Map(Array.from(document.querySelectorAll('button[data-action]'), (button) => [button.dataset.action, button]))
 
 const blank = createScene()
-const sample = starterWorlds[0]
-let scene = sample ? validateScene({ ...sample, id: blank.id }) : blank
+let scene = blank
 let selection = null
-let saved = JSON.stringify(scene)
+let saved = scene
 let history = [{ scene, selection }]
 let historyIndex = 0
 let busy = false
 let viewport
 let networkMode
+let tool = 'select'
+let axisSpace = 'world'
+let playing = false
+let dragging = false
 
 function element(tag, className, value) {
   const node = document.createElement(tag)
@@ -48,7 +55,7 @@ function selectedObject() {
 }
 
 function dirty() {
-  return JSON.stringify(scene) !== saved
+  return scene !== saved
 }
 
 function setStatus(message, kind = 'ready') {
@@ -66,19 +73,42 @@ function showGraphicsError(error) {
 }
 
 function updateActions() {
-  for (const action of ['open', 'save', 'save-as', 'playtest', 'publish']) {
-    actionButtons.get(action).disabled = !desktop || busy
+  const locked = busy || playing || dragging
+  for (const action of ['open', 'save', 'save-as', 'publish']) {
+    actionButtons.get(action).disabled = !desktop || locked
   }
-  actionButtons.get('new').disabled = busy
-  actionButtons.get('frame').disabled = !viewport || !byId('graphics-error').hidden
-  actionButtons.get('undo').disabled = busy || historyIndex === 0
-  actionButtons.get('redo').disabled = busy || historyIndex === history.length - 1
-  actionButtons.get('duplicate').disabled = busy || !selection
-  actionButtons.get('delete').disabled = busy || !selection
-  for (const kind of Object.keys(shapes)) {
-    actionButtons.get(`add-${kind}`).disabled = busy
-  }
+  actionButtons.get('playtest').disabled = busy || dragging || !viewport || !byId('graphics-error').hidden
+  actionButtons.get('new').disabled = locked
+  actionButtons.get('frame').disabled = locked || !viewport || !byId('graphics-error').hidden
+  actionButtons.get('undo').disabled = locked || historyIndex === 0
+  actionButtons.get('redo').disabled = locked || historyIndex === history.length - 1
+  actionButtons.get('duplicate').disabled = locked || !selection
+  actionButtons.get('delete').disabled = locked || !selection
+  for (const kind of Object.keys(shapes)) actionButtons.get(`add-${kind}`).disabled = locked
+  for (const control of [...modeButtons, ...snapInputs, byId('camera-view')]) control.disabled = locked
+  byId('axes-space').disabled = locked || tool === 'scale'
   byId('dirty-indicator').hidden = !dirty()
+  byId('editor-dock').inert = playing || busy
+}
+
+function updateTool() {
+  const [enabled, distance, angle, space] = snapInputs
+  for (const button of modeButtons) button.setAttribute('aria-pressed', String(button.dataset.mode === tool))
+  space.value = tool === 'scale' ? 'local' : axisSpace
+  viewport?.setTool(tool, space.value, enabled.checked && distance.validity.valid && angle.validity.valid,
+    distance.valueAsNumber, angle.valueAsNumber)
+}
+
+function selectTool(mode) {
+  if (busy || playing || dragging) return
+  tool = mode
+  updateTool()
+  updateActions()
+  if (mode !== 'select' && !selection) {
+    setStatus('Select a part in the viewport or Outliner.')
+  } else {
+    setStatus({ select: 'Select parts', translate: 'Drag a handle to move', rotate: 'Drag a ring to rotate', scale: 'Drag a handle to scale' }[mode])
+  }
 }
 
 function updateSelection() {
@@ -91,7 +121,7 @@ function updateSelection() {
 }
 
 function select(id) {
-  if (selection === id) return
+  if (playing || dragging || selection === id) return
   selection = id
   history[historyIndex].selection = id
   renderInspector()
@@ -109,10 +139,17 @@ function renderOutliner() {
   byId('world-title').textContent = scene.name
   byId('document-label').title = scene.name
   byId('outliner-world').textContent = scene.name
-  byId('object-count').textContent = scene.objects.length
-  byId('empty-objects').hidden = scene.objects.length > 0
+  const query = search.value.trim().toLocaleLowerCase()
+  const parts = scene.objects.filter((part) => !query || part.name.toLocaleLowerCase().includes(query))
+  byId('object-count').textContent = query ? `${parts.length} / ${scene.objects.length}` : scene.objects.length
+  const empty = byId('empty-objects')
+  empty.hidden = parts.length > 0
+  empty.textContent = query ? 'No matching parts.' : 'Add a part from the toolbar.'
+  const scroller = objectList.closest('.outliner-scroll')
+  const scrollTop = scroller.scrollTop
+  const focused = document.activeElement?.dataset.objectId
 
-  const rows = scene.objects.map((object) => {
+  const rows = parts.map((object) => {
     const row = element('li')
     const button = element('button', 'outline-row')
     button.type = 'button'
@@ -126,6 +163,8 @@ function renderOutliner() {
     return row
   })
   objectList.replaceChildren(...rows)
+  scroller.scrollTop = scrollTop
+  if (focused) objectList.querySelector(`[data-object-id="${focused}"]`)?.focus({ preventScroll: true })
 }
 
 function section(title, ...fields) {
@@ -148,12 +187,14 @@ function field(label, property, value, type = 'text', options = {}) {
   return wrapper
 }
 
-function vector(label, property, values, isSize = false) {
+function vector(label, property, values) {
   const wrapper = element('div')
   const fields = element('div', 'vector-fields')
   const caption = element('span', 'vector-label', label)
   for (const [index, axis] of axes.entries()) {
-    const limits = isSize ? [0.1, 128] : [axis === 'y' ? -40 : -250, 250]
+    const limits = {
+      size: [0.1, 128], rotation: [-180, 180],
+    }[property] ?? [axis === 'y' ? -40 : -250, 250]
     const value = Array.isArray(values) ? values[index] : values[axis]
     const axisField = field(axis.toUpperCase(), property, value, 'number', {
       min: limits[0], max: limits[1], step: 'any', required: true,
@@ -184,7 +225,10 @@ function renderInspector() {
   if (object) {
     inspector.replaceChildren(
       section('Object', name),
-      section('Transform', vector('Position', 'position', object.position), vector('Size', 'size', object.size, true)),
+      section('Transform',
+        vector('Position', 'position', object.position),
+        vector('Rotation (°)', 'rotation', object.rotation),
+        vector('Size', 'size', object.size)),
       section('Appearance', field('Color', 'color', object.color, 'color'), solidField(object.solid)),
     )
     return
@@ -230,9 +274,10 @@ function changeHistory(delta) {
 function setProject(newScene) {
   scene = validateScene(newScene)
   selection = null
-  saved = JSON.stringify(scene)
+  saved = scene
   history = [{ scene, selection }]
   historyIndex = 0
+  search.value = ''
   byId('object-group').open = true
   renderScene()
   viewport?.focus()
@@ -302,7 +347,7 @@ function add(kind) {
     ? beside(selected, shape.size)
     : [x > 247.5 ? x - 2.5 : x + 2.5, Math.min(250, y + shape.size[1] / 2), z]
   applyEdit((draft) => draft.objects.push({
-    id, name: nextName(shape.label), kind, position, size: shape.size, color: shape.color, solid: true,
+    id, name: nextName(shape.label), kind, position, rotation: [0, 0, 0], size: shape.size, color: shape.color, solid: true,
   }), id)
   revealSelection()
   setStatus(`Added a ${kind}`)
@@ -333,7 +378,7 @@ async function saveProject(saveAs = false) {
     setStatus('Save canceled')
     return false
   }
-  saved = JSON.stringify(snapshot)
+  saved = snapshot
   updateActions()
   setStatus(`Saved ${snapshot.name}`)
   return true
@@ -376,9 +421,40 @@ async function openProject() {
   setStatus(`Opened ${scene.name}`)
 }
 
-async function playtest() {
-  await desktop.playtest(scene)
-  setStatus('Playtest opened in Pot Client')
+function playtest() {
+  playing = !playing
+  viewport.playtest(playing)
+  document.body.classList.toggle('playtesting', playing)
+  byId('playtest-label').textContent = playing ? 'Stop' : 'Playtest'
+  actionButtons.get('playtest').querySelector('use').setAttribute('href', playing ? '#icon-stop' : '#icon-play')
+  actionButtons.get('playtest').title = playing ? 'Stop playtest (F5 or Esc)' : 'Playtest in this view (F5)'
+  byId('edit-help').hidden = playing
+  byId('play-help').hidden = !playing
+  canvas.setAttribute('aria-label', playing ? 'Playtest viewport' : 'Editable 3D scene')
+  canvas.focus()
+  setStatus(playing ? 'Playtesting from the current spawn' : 'Returned to editing')
+  updateActions()
+}
+
+function previewTransform(transform) {
+  for (const property of ['position', 'rotation', 'size']) {
+    for (const input of inspector.querySelectorAll(`input[data-property="${property}"]`)) {
+      input.value = transform[property][axes.indexOf(input.dataset.axis)]
+    }
+  }
+}
+
+function commitTransform(id, transform) {
+  if (!id || selection !== id) return
+  try {
+    applyEdit((draft) => Object.assign(draft.objects.find((part) => part.id === id), transform), id, true)
+    previewTransform(selectedObject())
+    setStatus({ translate: 'Part moved', rotate: 'Part rotated', scale: 'Part resized' }[tool] || 'Part updated')
+  } catch (error) {
+    viewport.setScene(scene)
+    previewTransform(selectedObject())
+    setStatus(error.message, 'error')
+  }
 }
 
 async function publish() {
@@ -415,7 +491,7 @@ const actions = {
   delete: deleteSelected,
   duplicate,
   frame: () => viewport?.focus(selection || undefined),
-  playtest: () => perform(playtest, 'Opening playtest…'),
+  playtest,
   publish: () => perform(publish, 'Publishing…'),
 }
 
@@ -431,6 +507,21 @@ function activate(action) {
 for (const [action, button] of actionButtons) {
   button.addEventListener('click', () => activate(action))
 }
+for (const button of modeButtons) button.addEventListener('click', () => selectTool(button.dataset.mode))
+for (const input of snapInputs) input.addEventListener('change', () => {
+  if (!input.validity.valid) { input.reportValidity(); return }
+  if (input.id === 'axes-space') axisSpace = input.value
+  updateTool()
+})
+byId('camera-view').addEventListener('change', (event) => {
+  viewport?.focus(selection, event.target.value)
+  event.target.value = ''
+})
+search.addEventListener('input', () => {
+  if (search.value) byId('object-group').open = true
+  renderOutliner()
+  updateSelection()
+})
 byId('select-world').addEventListener('click', () => select(null))
 objectList.addEventListener('click', (event) => {
   const row = event.target.closest('button[data-object-id]')
@@ -447,7 +538,19 @@ window.addEventListener('beforeunload', (event) => {
 window.addEventListener('keydown', (event) => {
   if (event.defaultPrevented || dialog.open) return
   const key = event.key.toLowerCase()
-  const field = event.target instanceof HTMLElement && (event.target.matches('input, textarea') || event.target.isContentEditable)
+  const field = event.target instanceof HTMLElement && (event.target.matches('input, textarea, select') || event.target.isContentEditable)
+  if (key === 'escape' && viewport?.cancelTransform()) {
+    event.preventDefault()
+    setStatus('Transform canceled')
+    return
+  }
+  if (key === 'f5' || (playing && key === 'escape')) {
+    event.preventDefault()
+    if (field) event.target.blur()
+    activate('playtest')
+    return
+  }
+  if (playing) return
   let action
   if (event.ctrlKey || event.metaKey) {
     if (key === 's') action = event.shiftKey ? 'save-as' : 'save'
@@ -458,6 +561,12 @@ window.addEventListener('keydown', (event) => {
   } else if (!field && !event.altKey) {
     if (key === 'f') action = 'frame'
     else if (key === 'delete' || key === 'backspace') action = 'delete'
+    else if (['q', 'w', 'e', 'r'].includes(key)) {
+      event.preventDefault()
+      selectTool({ q: 'select', w: 'translate', e: 'rotate', r: 'scale' }[key])
+      canvas.focus({ preventScroll: true })
+      return
+    }
   }
   if (!action) return
   event.preventDefault()
@@ -466,9 +575,12 @@ window.addEventListener('keydown', (event) => {
 })
 
 try {
-  viewport = createViewport(byId('viewport'), {
+  viewport = createViewport(canvas, {
     mode: 'studio',
     onSelect: select,
+    onTransform: commitTransform,
+    onPreview: previewTransform,
+    onDragging(active) { dragging = active; updateActions() },
     onError: showGraphicsError,
     onRestore: () => showGraphicsError(null),
   })
@@ -476,7 +588,35 @@ try {
   showGraphicsError(error)
 }
 renderScene()
+updateTool()
 
+const divider = byId('dock-divider')
+let dockWidth = 300
+function resizeDock(width) {
+  dockWidth = Math.max(245, Math.min(460, Math.round(width)))
+  document.querySelector('.workspace').style.setProperty('--dock-width', `${dockWidth}px`)
+  divider.setAttribute('aria-valuenow', String(dockWidth))
+}
+divider.addEventListener('pointerdown', (event) => {
+  if (playing || event.button !== 0) return
+  divider.setPointerCapture(event.pointerId)
+  divider.dataset.resizing = ''
+})
+divider.addEventListener('pointermove', (event) => {
+  if (divider.hasPointerCapture(event.pointerId)) resizeDock(document.documentElement.clientWidth - event.clientX - 4)
+})
+divider.addEventListener('lostpointercapture', () => { delete divider.dataset.resizing })
+divider.addEventListener('keydown', (event) => {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+  event.preventDefault()
+  resizeDock(dockWidth + (event.key === 'ArrowLeft' ? 16 : -16))
+})
+
+if (desktop?.getSampleProject) {
+  desktop.getSampleProject().then((sample) => {
+    if (scene === blank && !busy) setProject({ ...sample, id: blank.id, name: 'Terrace Workshop' })
+  }).catch(() => {})
+}
 if (desktop?.getNetworkMode) {
   desktop.getNetworkMode().then((mode) => {
     networkMode = mode

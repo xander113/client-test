@@ -1,318 +1,179 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, session } from 'electron';
-import { randomUUID } from 'node:crypto';
-import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import WebSocket from 'ws';
-
-import { MAX_SCENE_BYTES, validateScene } from '../shared/scene.mjs';
-import { startRenderService } from '../services/render/service.mjs';
-import { startWorldService } from '../services/worlds/service.mjs';
-import { decodeSessionMessage, isPose, WorldApi } from './world-api.mjs';
+import { Runtime } from './native.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const packageInfo = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+const packageInfo = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 const product = packageInfo.potProduct ?? (process.argv.includes('--studio') ? 'studio' : 'client');
+const studio = product === 'studio';
 const windows = new Map();
-let local;
-let primary;
-let thumbnailService;
+let runtime;
 let quitting = false;
-let renderCredential;
 
-app.setName(product === 'studio' ? 'Pot Studio' : 'Pot Client');
+app.setName(studio ? 'Pot Studio' : 'Pot Client');
 if (process.platform === 'win32') {
-  app.setAppUserModelId(product === 'studio' ? 'org.potproject.studio' : 'org.potproject.client');
+  app.setAppUserModelId(studio ? 'org.potproject.studio' : 'org.potproject.client');
 }
 
-async function localNetwork(dataDir) {
-  const credential = randomUUID();
-  const server = await startWorldService({
-    host: '127.0.0.1',
-    port: 0,
-    dataDir,
-    readToken: credential,
-    writeToken: credential,
-    renderEndpoint: thumbnailService.url,
-    renderToken: renderCredential,
-  });
-  return {
-    api: new WorldApi(server.url, { readToken: credential, writeToken: credential }),
-    close: () => server.close(),
-  };
-}
-
-async function configuredApi() {
-  if (!process.env.POT_API_ENDPOINT) return local.api;
-  try {
-    const hosted = new WorldApi(process.env.POT_API_ENDPOINT, {
-      readToken: process.env.POT_API_READ_TOKEN,
-      writeToken: process.env.POT_API_WRITE_TOKEN,
-      mode: 'hosted',
-    });
-    await hosted.health();
-    // Verify browse access before selecting a hosted service for this launch.
-    await hosted.list();
-    return hosted;
-  } catch {
-    console.warn('Pot is using its local world service because the hosted catalog is unavailable.');
-    return local.api;
-  }
-}
-
-function stateFor(event) {
+function windowFor(event) {
   const state = windows.get(event.sender.id);
-  if (!state || !event.senderFrame || event.senderFrame !== event.sender.mainFrame ||
-      event.senderFrame.url !== state.url) {
-    throw new Error('This window cannot access Pot services.');
+  if (!state || event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== state.url) {
+    throw new Error('This window cannot access Pot.');
   }
   return state;
 }
 
-function forStudio(state) {
-  if (state.mode !== 'studio') throw new Error('This action requires Pot Studio.');
+function forStudio() {
+  if (!studio) throw new Error('This action requires Pot Studio.');
 }
 
-function stopSession(state) {
-  const socket = state.socket;
-  state.socket = null;
-  if (!socket) return;
-  if (socket.readyState === WebSocket.OPEN) socket.close(1000, 'Left world');
-  else socket.terminate();
-}
-
-function sendSession(state, message) {
-  if (!state.win.isDestroyed()) state.win.webContents.send('pot:session', message);
-}
-
-function joinSession(state, worldId) {
-  stopSession(state);
-  const socket = state.api.connect(worldId);
-  state.socket = socket;
-  state.lastMove = 0;
-
-  return new Promise((resolve, reject) => {
-    let welcomed = false;
-    const welcomeTimeout = setTimeout(() => {
-      socket.terminate();
-      reject(new Error('The world service did not start the session.'));
-    }, 8_000);
-    socket.on('message', (data, isBinary) => {
-      if (isBinary || state.socket !== socket) return;
-      try {
-        const message = decodeSessionMessage(data);
-        if (!message) return;
-        if (message.type === 'welcome') {
-          welcomed = true;
-          clearTimeout(welcomeTimeout);
-          resolve();
-        }
-        if (welcomed) sendSession(state, message);
-      } catch {
-        socket.close(1007, 'Invalid session message');
-      }
-    });
-    socket.on('error', () => {
-      if (!welcomed) reject(new Error('Pot could not join this session.'));
-    });
-    socket.on('close', () => {
-      clearTimeout(welcomeTimeout);
-      if (!welcomed) reject(new Error('Pot could not join this session.'));
-      if (state.socket === socket) {
-        state.socket = null;
-        if (welcomed) sendSession(state, { type: 'closed', message: 'The session ended.' });
-      }
-    });
-  });
-}
-
-function newWindow(mode, api = primary, sceneId = null, network = null) {
-  const studio = mode === 'studio';
-  const title = studio ? 'Pot Studio' : 'Pot Client';
+function newWindow() {
   const win = new BrowserWindow({
-    title,
-    width: studio ? 1440 : 1280,
-    height: studio ? 930 : 860,
-    minWidth: studio ? 1000 : 820,
-    minHeight: 600,
+    title: app.getName(),
+    width: studio ? 1440 : 1240,
+    height: studio ? 930 : 820,
+    minWidth: studio ? 900 : 720,
+    minHeight: 570,
     show: false,
-    backgroundColor: '#f7faf8',
-    icon: path.join(root, 'build', 'icons', studio ? 'studio.png' : 'client.png'),
+    backgroundColor: '#f6f7f5',
+    icon: path.join(root, 'build', 'icons', `${product}.png`),
     webPreferences: {
       preload: path.join(root, 'desktop', 'preload.cjs'),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      webSecurity: true,
     },
   });
-  const renderer = new URL(`../dist/${mode}/index.html`, import.meta.url);
-  const state = { win, mode, api, sceneId, url: renderer.href, socket: null, project: null };
+  const renderer = new URL(`../dist/${product}/index.html`, import.meta.url);
   const id = win.webContents.id;
-  windows.set(id, state);
+  windows.set(id, { win, id, url: renderer.href, file: null, lastInput: 0 });
   win.webContents.on('will-navigate', (event) => event.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-attach-webview', (event) => event.preventDefault());
-  win.webContents.on('will-prevent-unload', (event) => {
-    const answer = dialog.showMessageBoxSync(win, {
-      type: 'warning',
-      title: 'Unsaved project',
-      message: 'Close this window and discard unsaved changes?',
-      buttons: ['Keep editing', 'Discard changes'],
-      cancelId: 0,
-      defaultId: 0,
+  if (studio) {
+    win.webContents.on('will-prevent-unload', (event) => {
+      const choice = dialog.showMessageBoxSync(win, {
+        type: 'warning',
+        title: 'Unsaved project',
+        message: 'Close this project and discard your changes?',
+        buttons: ['Keep editing', 'Discard changes'],
+        cancelId: 0,
+        defaultId: 0,
+      });
+      if (choice === 1) event.preventDefault();
     });
-    if (answer === 1) event.preventDefault();
-  });
-
+  }
   win.once('ready-to-show', () => win.show());
   win.on('closed', () => {
-    stopSession(state);
     windows.delete(id);
-    if (network) void network.close().catch(console.error);
+    if (!studio && !quitting) void runtime.call('leave', id).catch(() => {});
   });
-  void win.loadFile(fileURLToPath(renderer)).catch((error) => {
+  void win.loadFile(fileURLToPath(renderer)).catch(() => {
     if (win.isDestroyed()) return;
-    dialog.showErrorBox(title, `Pot could not load this window. ${error.message}`);
+    dialog.showErrorBox(app.getName(), 'Pot could not load its interface.');
     win.destroy();
   });
-  return win;
 }
-
-async function readProject(filename) {
-  const file = await stat(filename);
-  if (!file.isFile() || file.size > MAX_SCENE_BYTES) throw new Error('The project file exceeds Pot\'s size limit.');
-  const data = await readFile(filename);
-  if (data.length > MAX_SCENE_BYTES) throw new Error('The project file is too large.');
-  return validateScene(JSON.parse(data.toString('utf8')));
-}
-
-async function writeProject(filename, scene) {
-  const temp = path.join(path.dirname(filename), `.${randomUUID()}.tmp`);
-  const document = JSON.stringify(scene, null, 2) + '\n';
-  if (Buffer.byteLength(document) > MAX_SCENE_BYTES) throw new Error('The project is too large to save.');
-  try {
-    await writeFile(temp, document, { flag: 'wx', mode: 0o600, flush: true });
-    await rename(temp, filename);
-  } finally {
-    await rm(temp, { force: true }).catch(() => {});
-  }
-}
-
-const projectFilter = [{ name: 'Pot project', extensions: ['pot.json', 'json'] }];
 
 async function openProject(state) {
-  forStudio(state);
-  const result = await dialog.showOpenDialog(state.win, {
+  forStudio();
+  const selection = await dialog.showOpenDialog(state.win, {
     properties: ['openFile'],
-    filters: projectFilter,
+    filters: [{ name: 'Pot project', extensions: ['pot', 'json'] }],
   });
-  if (result.canceled) return null;
-  const filename = result.filePaths[0];
-  const scene = await readProject(filename);
-  state.project = { id: scene.id, filename };
+  if (selection.canceled) return null;
+  const filename = selection.filePaths[0];
+  const scene = await runtime.call('open', state.id, { path: filename });
+  state.file = {
+    id: scene.id,
+    filename: path.extname(filename).toLowerCase() === '.pot' ? filename : null,
+  };
   return scene;
 }
 
-async function saveProject(state, input, saveAs) {
-  forStudio(state);
-  const scene = validateScene(input);
-  let filename = state.project?.id === scene.id ? state.project.filename : null;
+async function saveProject(state, scene, saveAs) {
+  forStudio();
+  let filename = state.file?.id === scene?.id ? state.file.filename : null;
   if (!filename || saveAs) {
-    const result = await dialog.showSaveDialog(state.win, {
-      filters: projectFilter,
-      defaultPath: filename ?? `${scene.id}.pot.json`,
+    const selection = await dialog.showSaveDialog(state.win, {
+      filters: [{ name: 'Pot project', extensions: ['pot'] }],
+      defaultPath: filename ?? `${String(scene?.name || 'Project').replace(/[^ a-z0-9_-]/gi, '_').slice(0, 60)}.pot`,
       properties: ['showOverwriteConfirmation'],
     });
-    if (result.canceled) return false;
-    filename = result.filePath;
-    if (!filename.toLowerCase().endsWith('.json')) filename += '.pot.json';
+    if (selection.canceled) return false;
+    filename = selection.filePath;
+    if (path.extname(filename).toLowerCase() !== '.pot') filename += '.pot';
   }
-  await writeProject(filename, scene);
-  state.project = { id: scene.id, filename };
+  await runtime.call('save', state.id, { path: filename, scene });
+  state.file = { id: scene.id, filename };
   return true;
 }
 
-async function playtest(state, input) {
-  forStudio(state);
-  const scene = validateScene(input);
-  const network = await localNetwork();
-  try {
-    await network.api.publish(scene);
-    newWindow('client', network.api, scene.id, network);
-  } catch (error) {
-    await network.close();
-    throw error;
-  }
-}
-
 const actions = {
-  worlds: ({ api }) => api.list(),
-  'load-world': ({ api }, id) => api.load(id),
-  thumbnail: ({ api }, id) => api.thumbnail(id),
-  'launch-world': ({ sceneId }) => sceneId,
-  'network-mode': ({ api }) => api.mode,
+  worlds: ({ id }) => runtime.call('worlds', id),
+  'load-world': ({ id }, world) => runtime.call('load', id, { world }),
+  thumbnail: async ({ id }, world) => {
+    const png = await runtime.call('thumbnail', id, { world });
+    return `data:image/png;base64,${Buffer.from(png).toString('base64')}`;
+  },
+  'network-mode': ({ id }) => runtime.call('mode', id),
+  'sample-project': ({ id }) => { forStudio(); return runtime.call('sample', id); },
   'open-project': openProject,
   'save-project': saveProject,
-  'publish-world': (state, scene) => {
-    forStudio(state);
-    return state.api.publish(scene);
-  },
-  playtest,
-  join: joinSession,
-  leave: stopSession,
+  'publish-world': ({ id }, scene) => { forStudio(); return runtime.call('publish', id, { scene }); },
+  join: ({ id }, world) => runtime.call('join', id, { world }),
+  leave: ({ id }) => runtime.call('leave', id),
 };
 
-for (const [name, handler] of Object.entries(actions)) {
-  ipcMain.handle(`pot:${name}`, (event, ...args) => handler(stateFor(event), ...args));
+for (const [action, handler] of Object.entries(actions)) {
+  ipcMain.handle(`pot:${action}`, (event, ...args) => handler(windowFor(event), ...args));
 }
-ipcMain.on('pot:move', (event, pose) => {
-  const state = windows.get(event.sender.id);
-  const now = performance.now();
-  if (!state || event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== state.url ||
-      state.socket?.readyState !== WebSocket.OPEN || !isPose(pose) ||
-      now - state.lastMove < 33 || state.socket.bufferedAmount > 32768) return;
-  state.lastMove = now;
-  const { x, y, z, yaw } = pose;
-  state.socket.send(JSON.stringify({ type: 'move', x, y, z, yaw }));
+ipcMain.on('pot:input', (event, input) => {
+  try {
+    const state = windowFor(event);
+    const now = performance.now();
+    if (now - state.lastInput < 22 || studio) return;
+    state.lastInput = now;
+    runtime.input(state.id, { x: input.x, z: input.z, yaw: input.yaw, jump: input.jump });
+  } catch {
+    // A closed window or malformed input has no active session to update.
+  }
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 app.on('activate', () => {
-  if (!windows.size && primary && !quitting) newWindow(product);
+  if (!windows.size && runtime && !quitting) newWindow();
 });
 app.on('will-quit', (event) => {
-  if (!local) return;
+  if (!runtime) return;
   event.preventDefault();
   if (quitting) return;
   quitting = true;
-  const deadline = setTimeout(() => app.exit(0), 4000);
-  void Promise.allSettled([local.close(), thumbnailService.close()]).then(() => {
-    clearTimeout(deadline);
-    app.exit(0);
-  });
+  void runtime.close().finally(() => app.exit(0));
 });
 
 async function start() {
   session.defaultSession.setPermissionCheckHandler(() => false);
-  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
-    { role: 'fileMenu' },
-    { role: 'editMenu' },
-    { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'togglefullscreen' }] },
-  ]));
-  renderCredential = randomUUID();
-  thumbnailService = await startRenderService({ host: '127.0.0.1', port: 0, token: renderCredential });
-  local = await localNetwork(path.join(app.getPath('appData'), 'Pot', 'worlds'));
-  primary = await configuredApi();
-  newWindow(product);
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, cb) => cb(false));
+  Menu.setApplicationMenu(process.platform === 'darwin'
+    ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }])
+    : null);
+  const binary = process.platform === 'win32' ? 'potd.exe' : 'potd';
+  const binaries = app.isPackaged ? process.resourcesPath : path.join(root, '.native', `${process.platform}-${process.arch}`);
+  runtime = new Runtime(path.join(binaries, binary), path.join(app.getPath('appData'), 'Pot', 'worlds'),
+    (id, event) => {
+      const state = windows.get(id);
+      if (state && !state.win.isDestroyed()) state.win.webContents.send('pot:session', event);
+    });
+  await runtime.call('mode', 0);
+  newWindow();
 }
 
-void app.whenReady().then(start).catch(async (error) => {
-  dialog.showErrorBox(app.getName(), `Pot could not start. ${error.message}`);
-  if (thumbnailService && !local) await thumbnailService.close().catch(console.error);
+void app.whenReady().then(start).catch((error) => {
+  dialog.showErrorBox(app.getName(), error.message);
   app.quit();
 });

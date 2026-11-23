@@ -1,83 +1,107 @@
 # Pot
 
-Pot is an original desktop sandbox with a player, a world editor, and a thumbnail renderer. Pot Client and Pot Studio use a light theme with the Pot green `#09b734`.
+Pot is a desktop sandbox with a playable client, a 3D place editor, and a headless thumbnail renderer. Pot Client and Pot Studio share a light desktop interface with Pot green `#09b734`.
 
 | Component | Source | Purpose |
 | --- | --- | --- |
-| Pot Client | [renderer/client](renderer/client/) | Browse worlds, play solo, or join a shared session. |
-| Pot Studio | [renderer/studio](renderer/studio/) | Edit primitive-based 3D worlds, save projects, open a playtest, and publish to the selected library. |
-| World service | [services/worlds](services/worlds/) | Store published worlds and synchronize player presence and movement over WebSocket. |
-| PotRenderService (PRS) | [services/render](services/render/) | Generate PNG world previews in a bounded pool of workers. |
+| Pot Client | [renderer/client](renderer/client/) | Browse places, play solo, and join live sessions. |
+| Pot Studio | [renderer/studio](renderer/studio/) | Build, save, playtest, and publish places. |
+| Pot runtime | [native](native/) | Go project codec, desktop service, world storage, session simulation, and network replication. |
+| PotRenderService | [native/internal/thumb](native/internal/thumb/) | Render the same place geometry to PNG through local or hosted PRS. |
 | WEBSERVICE | `WEBSERVICE/` | Reserved empty directory for the future website. The install step creates it. |
 
-## Run the desktop apps
+## Run and test on Windows and macOS
 
-Install Node.js 22.12 or later on Windows or macOS. From the repository checkout, open a terminal and run one of the app commands. The same commands work in PowerShell and Terminal.
+Install Node.js 22.12 or later and Go 1.23 or later. Run from the repository checkout.
 
 ```sh
 cd ANEW
 npm ci
-npm run start:client
 npm run start:studio
 ```
 
-Use separate terminals to run both apps. The first install downloads Electron. After installation, the local workflows run without internet access or a registered domain. Both apps start private loopback world and render services. The three built-in worlds are available immediately. In the client, use **WASD** or the arrow keys to move, **Space** to jump, and mouse drag to look.
+Use `npm run start:client` for Pot Client. The first install and build download dependencies. The applications then start local services on loopback and can operate without internet access or a domain. Both apps see the same library under the operating system’s application data directory in `Pot/worlds`. In an open client, select **Worlds** to refresh the catalog after publishing from Studio.
 
-In Studio, create and arrange shapes, edit attributes in the Properties panel, and save as `.pot.json`. **Playtest** opens a Pot Client window with an isolated copy of the current project. **Publish** writes to the local library when the app is using loopback. The two apps share the local library under the operating system’s application data directory in `Pot/worlds`. Use the **Worlds** navigation button in an already open client to refresh the list.
+## Edit and playtest
+
+| Action | Control |
+| --- | --- |
+| Select a part | Click it in the viewport or Outliner. Use **Find a part** to filter the Outliner. |
+| Move, rotate, and scale | Select **Move**, **Rotate**, or **Scale**, then drag a colored axis or ring. Use **W**, **E**, or **R** to switch tools and **Q** to return to Select. |
+| Control alignment | Use **World axes** or **Local axes** for Move and Rotate. Scale follows local axes. The **Snap** checkbox and adjacent increment menu control movement, size, and angle steps. |
+| Enter an exact transform | Set **Position**, **Rotation**, and **Size** in Properties. Rotation uses degrees. |
+| Navigate | Drag to orbit, middle-drag to pan, and scroll to zoom. Hold the right mouse button to look and use **WASD** to fly. Use **Q** and **E** to move down and up while looking. |
+| Frame a part or switch views | Press **F** or use the frame button next to **Camera view**. Choose Perspective, Top, Front, or Right. |
+| Cancel or undo | Press **Esc** during a drag. Each completed drag is one undo step. |
+| Playtest | Press **F5** or click **Playtest**. Press **Esc** or **F5** to return to the same selection and editor view. |
+
+In play, use **WASD** or the arrow keys to move, **Space** to jump, and mouse drag to look. Studio plays the working copy in its own viewport, including edits you have yet to save or publish.
+
+Save projects as binary `.pot` files. Use **Open** to import a first-release `.pot.json` project and **Save** to write it as `.pot`. Existing local library files from the first release are readable and are written in binary when republished.
+
+## Runtime and replication
+
+Studio authors a typed place whose parts have stable IDs, shapes, transforms, and appearance. Publishing creates a validated snapshot for the world service. A session loads that snapshot into a live room, runs avatar motion and collisions at a fixed server tick, and broadcasts position snapshots. Clients send control inputs. The client predicts its own motion and interpolates other players between snapshots. Solo play and Studio playtest use the same movement rules locally. Solid geometry uses axis-aligned bounds calculated from the rotated part.
+
+The Go runtime owns project files, endpoint selection, publishing, the session protocol, and PRS. Electron supplies native windows, file pickers, and a restricted bridge to that runtime. Saved files carry a Pot signature and format version. The bridge, HTTP world data, and session frames use MessagePack. Thumbnails use PNG.
+
+The authoring and runtime split is inspired by Roblox’s public documentation. The formats and protocol are Pot’s own. [Roblox data model](https://create.roblox.com/docs/projects/data-model) · [Roblox client-server runtime](https://create.roblox.com/docs/projects/client-server)
+
+Studio places transform handles and numeric fields near the model they edit. Both apps use the same focused controls, system typography, and reduced-motion settings. [Roblox part tools](https://create.roblox.com/docs/parts) · [NN/g usability heuristics](https://www.nngroup.com/articles/ten-usability-heuristics/) · [Frontend design research notes on common AI patterns](https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md)
 
 ## Test multiplayer without a domain
 
-Start a shared world service to put two desktop instances in the same session. The local standalone service automatically starts a private PRS when no render endpoint is supplied.
+Start a shared world service.
 
 ```sh
 npm run service:worlds
 ```
 
-On Windows, set the endpoint in each app terminal.
+Run this in each Windows app terminal.
 
 ```powershell
 $env:POT_API_ENDPOINT = 'http://127.0.0.1:4831'
 npm run start:client
 ```
 
-On macOS, use the same endpoint in the environment.
+On macOS, use the same endpoint.
 
 ```sh
 POT_API_ENDPOINT=http://127.0.0.1:4831 npm run start:client
 ```
 
-Start a second client against that address and select **Join online** in the same world. The traffic remains on the machine. Run the Studio command with the same endpoint and a publishing credential to publish into that shared service.
+Open the same world in two clients and choose **Join online**. Use the Studio start command with the same endpoint and a publishing credential to publish to the shared service.
 
-## Connect hosted services
+## Host the services
 
-Host the world service and PRS on persistent infrastructure when a website endpoint is available. The desktop backend reads `POT_API_ENDPOINT` at launch and expects the Pot API routes below, including WebSocket upgrades on the same base URL. Set the environment variable in the process launcher or desktop deployment environment. An unusable hosted catalog at startup leaves the desktop app connected to its local service. Endpoint settings and credentials stay in the backend.
+Set `POT_API_ENDPOINT` in the desktop process environment to connect the apps to your hosted Pot API. If the hosted catalog is unavailable at launch, Pot starts in local mode. Hosting an external website can use the same API contract. A reverse proxy can serve Pot under a URL prefix by stripping that prefix before forwarding to the service.
 
-| Process | Environment variables |
+| Process | Environment |
 | --- | --- |
-| Desktop | `POT_API_ENDPOINT` sets the world API base URL. `POT_API_READ_TOKEN` enables private worlds. `POT_API_WRITE_TOKEN` enables Studio publishing. |
-| World service | `POT_WORLD_HOST` and `POT_WORLD_PORT` set the listener, defaulting to `127.0.0.1:4831`. `POT_WORLD_DATA_DIR` points to a persistent directory. `POT_WORLD_READ_TOKEN` protects browsing and sessions when set. `POT_WORLD_WRITE_TOKEN` enables publishing. |
-| World service to PRS | `POT_RENDER_ENDPOINT` sets the optional separate PRS base URL. `POT_RENDER_TOKEN` supplies its bearer credential. |
-| PRS | `POT_RENDER_HOST` and `POT_RENDER_PORT` set the private listener, defaulting to `127.0.0.1:4812`. `POT_RENDER_TOKEN` protects rendering and is required on a non-loopback listener. |
+| Desktop | `POT_API_ENDPOINT` sets the base URL. `POT_API_READ_TOKEN` and `POT_API_WRITE_TOKEN` supply access and publishing credentials. |
+| World service | `POT_WORLD_HOST` and `POT_WORLD_PORT` default to `127.0.0.1:4831`. Set `POT_WORLD_DATA_DIR` for persistent worlds. `POT_WORLD_READ_TOKEN` restricts reads and sessions when set. `POT_WORLD_WRITE_TOKEN` enables publishing. `POT_WORLD_BROWSER_ORIGIN` allows a specific browser origin for WebSocket upgrades. |
+| World service to PRS | Set `POT_RENDER_ENDPOINT` and `POT_RENDER_TOKEN` to use separate PRS. By default the world service starts its own private renderer. |
+| Separate PRS | `POT_RENDER_HOST` and `POT_RENDER_PORT` default to `127.0.0.1:4812`. A non-loopback listener requires `POT_RENDER_TOKEN`. |
 
-Run `npm run service:worlds` for the world service and `npm run service:render` to run PRS separately. Use HTTPS and WSS at the reverse proxy for non-loopback connections. Keep PRS private, configure request and connection limits at the proxy, and back up the world data directory. Hosted publishing requires a managed Studio credential. Grant it to trusted operators only. Each world service process holds its active rooms in memory.
+For a Go-only deployment, build from `ANEW/native` with `go build -o potd ./cmd/potd`, then run `potd worlds` or `potd render`. Serve HTTPS and WSS through your proxy outside loopback. Keep PRS private and back up the world directory. A world service maintains its active rooms in memory.
 
-| Protocol | Route | Purpose |
-| --- | --- | --- |
-| HTTP GET | `/healthz` | Service health. |
-| HTTP GET | `/v1/worlds` | List published worlds. |
-| HTTP GET | `/v1/worlds/{id}` | Read a world document. |
-| HTTP PUT | `/v1/worlds/{id}` | Validate and persist a world document. |
-| HTTP GET | `/v1/worlds/{id}/thumbnail` | Get a rendered PNG. |
-| WebSocket | `/v1/session?world={id}` | Match peers in a world and exchange bounded position updates. |
-| HTTP POST to PRS | `/v1/render` | Render a world document to PNG. |
+| Route | Operation |
+| --- | --- |
+| `GET /healthz` | Service status. |
+| `GET /v2/worlds` | World catalog. |
+| `GET /v2/worlds/{id}` | Validated place snapshot. |
+| `PUT /v2/worlds/{id}` | Authenticated publishing. |
+| `GET /v2/worlds/{id}/thumbnail` | PNG preview. |
+| `GET /v2/session?world={id}` with WebSocket upgrade | Binary welcome, input, and server state frames. |
+| `POST /v2/render` | Generate a PNG from a binary place document. |
 
-The version 1 scene format supports three primitive geometries and a spawn position. Legacy project files, scripts, and network protocols require a separate migration.
+Use `application/msgpack` for binary HTTP payloads. Pot 0.2 clients and services use the v2 API and should be deployed together.
 
-## Test and package
+## Package
 
 ```sh
 npm test
 npm run package:desktop
 ```
 
-Run the packaging command on the target OS. Windows builds an installer for x64 and ARM64. macOS builds DMG and ZIP packages for Apple Silicon and Intel. Output is under `artifacts/client/` and `artifacts/studio/`. Use `npm run package:client` or `npm run package:studio` for one product. Use platform signing credentials and macOS notarization before distributing public releases.
+Run the packager on the target OS. Windows creates a setup program for x64 and ARM64. macOS creates DMG and ZIP packages for Apple Silicon and Intel. The packager compiles and includes the matching Go runtime in each app. Use the platform’s signing and notarization tools for public distribution.

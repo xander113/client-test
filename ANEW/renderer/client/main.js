@@ -7,7 +7,7 @@ const libraryContent = byId('library-content')
 const game = byId('game')
 const soloButton = byId('play-solo')
 const joinButton = byId('join-online')
-const canvasSlot = byId('canvas-slot')
+const canvas = byId('world-canvas')
 const controls = byId('controls-dialog')
 const playError = byId('play-error')
 const search = byId('world-search')
@@ -28,6 +28,7 @@ let activeWorld = null
 let launchTask = null
 let refreshTask = null
 let focusAfterPlay = soloButton
+let viewport
 
 function setStatus(scope, state, text) {
   byId(`${scope}-status`).dataset.state = state
@@ -50,7 +51,6 @@ function setGameView(playing) {
   library.hidden = playing
   game.hidden = !playing
   const navigation = byId('worlds-nav')
-  navigation.classList.toggle('active', !playing)
   if (playing) navigation.removeAttribute('aria-current')
   else navigation.setAttribute('aria-current', 'page')
 }
@@ -85,7 +85,8 @@ async function setThumbnail(worldId, image) {
   if (image.dataset.world !== worldId || !data) return
 
   image.src = data
-  image.hidden = false
+  await image.decode().catch(() => {})
+  if (image.dataset.world === worldId) image.hidden = false
 }
 
 function createIcon(name) {
@@ -116,6 +117,7 @@ function createCard(world) {
   card.dataset.id = world.id
   card.setAttribute('aria-pressed', String(world.id === selectedId))
   card.addEventListener('click', () => selectWorld(world.id))
+  card.addEventListener('dblclick', () => void startWorld(world.id, false, card))
 
   const preview = document.createElement('span')
   preview.className = 'world-preview card-preview'
@@ -194,8 +196,6 @@ async function refreshLibrary() {
         setStatus('library', 'ready', networkMode === 'hosted' ? 'Connected' : 'Local library')
       }
 
-      byId('search-box').hidden = worlds.length < 5
-      if (worlds.length < 5) search.value = ''
       thumbnailRequests.clear()
       byId('feature-thumbnail').removeAttribute('data-world')
       renderSelection()
@@ -248,6 +248,7 @@ function continueSolo(run, message) {
   run.unsubscribe?.()
   run.unsubscribe = null
   setStatus('game', 'warning', 'Playing solo')
+  run.viewport.setNetworked(false)
   run.viewport.setAvatars([], null)
   byId('players-status').textContent = message
   byId('player-count').textContent = '0'
@@ -273,17 +274,19 @@ function stopWorld() {
   const run = activeWorld
   if (!run) return
 
+  run.viewport.setPlaying(false)
+  run.viewport.setNetworked(false)
+  run.viewport.setAvatars([], null)
   activeWorld = null
   run.unsubscribe?.()
-  run.viewport.dispose()
-  canvasSlot.replaceChildren()
   setGameView(false)
 
   if (run.sessionRequested) {
     Promise.resolve(desktop.leaveWorld()).catch(() => {})
   }
 
-  focusAfterPlay.focus()
+  const focus = focusAfterPlay.isConnected ? focusAfterPlay : byId('world-cards').querySelector('[aria-pressed="true"]')
+  focus?.focus()
 }
 
 async function startWorld(id, online, focusTarget = soloButton) {
@@ -300,46 +303,35 @@ async function startWorld(id, online, focusTarget = soloButton) {
     const scene = await desktop.loadWorld(id)
     if (!scene) throw new Error('World not found')
 
-    setGameView(true)
     byId('world-title').textContent = scene.name
     playError.hidden = true
-    const canvas = document.createElement('canvas')
-    canvas.className = 'world-canvas'
-    canvas.tabIndex = 0
     canvas.setAttribute('aria-label', `${scene.name} play area`)
-    canvasSlot.replaceChildren(canvas)
-
     run = {
-      online,
-      connected: false,
-      sessionRequested: false,
-      selfId: null,
-      players: [],
-      rosterKey: null,
-      viewport: null,
-      unsubscribe: null,
+      online, connected: false, sessionRequested: false, selfId: null, players: [],
+      rosterKey: null, viewport: null, unsubscribe: null,
     }
-    run.viewport = createViewport(canvas, {
+    viewport ??= createViewport(canvas, {
       mode: 'client',
-      onPose: (pose) => {
-        if (activeWorld === run && run.connected) {
-          Promise.resolve(desktop.move(pose)).catch(() => {})
-        }
+      onInput: (input) => {
+        if (activeWorld?.connected) desktop.input(input)
       },
       onError: () => {
-        if (activeWorld !== run) return
+        if (!activeWorld) return
         playError.textContent = 'The 3D view paused. Leave and reopen the world if it stays paused.'
         playError.hidden = false
-        updatePlayback(run)
+        updatePlayback(activeWorld)
       },
       onRestore: () => {
-        if (activeWorld !== run) return
+        if (!activeWorld) return
         playError.hidden = true
-        updatePlayback(run)
+        updatePlayback(activeWorld)
       },
     })
+    run.viewport = viewport
     activeWorld = run
     run.viewport.setScene(scene)
+    run.viewport.restart()
+    setGameView(true)
     setLaunchStatus('')
     canvas.focus()
 
@@ -363,6 +355,7 @@ async function startWorld(id, online, focusTarget = soloButton) {
       await desktop.joinWorld(id)
       if (activeWorld !== run || !run.online) return
       run.connected = true
+      run.viewport.setNetworked(true)
       setStatus('game', 'ready', networkMode === 'hosted' ? 'Online' : 'Local session')
       updatePlayback(run)
     } catch {
@@ -374,8 +367,6 @@ async function startWorld(id, online, focusTarget = soloButton) {
     const gameViewFailed = !game.hidden
     if (activeWorld) stopWorld()
     else {
-      run?.viewport?.dispose()
-      canvasSlot.replaceChildren()
       setGameView(false)
     }
     setLaunchStatus(
@@ -398,6 +389,15 @@ byId('worlds-nav').addEventListener('click', () => {
 })
 byId('retry').addEventListener('click', () => void refreshLibrary())
 search.addEventListener('input', renderCards)
+byId('world-cards').addEventListener('keydown', (event) => {
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+  const cards = [...byId('world-cards').children]
+  const index = cards.indexOf(document.activeElement)
+  if (index < 0) return
+  event.preventDefault()
+  const next = cards[Math.max(0, Math.min(cards.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)))]
+  if (next) { next.focus(); selectWorld(next.dataset.id) }
+})
 soloButton.addEventListener('click', () => void startWorld(selectedId, false, soloButton))
 joinButton.addEventListener('click', () => void startWorld(selectedId, true, joinButton))
 byId('leave-world').addEventListener('click', stopWorld)
@@ -408,7 +408,7 @@ byId('controls-nav').addEventListener('click', () => {
 controls.addEventListener('close', () => {
   if (activeWorld) {
     updatePlayback(activeWorld)
-    canvasSlot.firstElementChild?.focus()
+    canvas.focus()
   }
 })
 window.addEventListener('keydown', (event) => {
@@ -417,7 +417,7 @@ window.addEventListener('keydown', (event) => {
 window.addEventListener('pagehide', () => {
   cardPreviews.disconnect()
   activeWorld?.unsubscribe?.()
-  activeWorld?.viewport.dispose()
+  viewport?.dispose()
 })
 
 async function start() {
@@ -430,14 +430,7 @@ async function start() {
   }
 
   setNetworkMode('local')
-  const loading = refreshLibrary()
-  try {
-    const worldId = await desktop.getLaunchWorld()
-    if (worldId) await startWorld(worldId, false)
-  } catch {
-    setLaunchStatus('The Studio playtest could not be opened.', true)
-  }
-  await loading
+  await refreshLibrary()
 }
 
 void start()

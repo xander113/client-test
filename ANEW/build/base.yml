@@ -1,11 +1,10 @@
 asar: true
 publish: null
+afterPack: ./build/pack-native.mjs
 artifactName: "${productName}-${version}-${arch}.${ext}"
 files:
   - dist/**/*
   - desktop/**/*
-  - services/**/*
-  - shared/**/*
   - build/icons/*.png
   - package.json
 win:

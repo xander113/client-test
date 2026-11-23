@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'">
   <title>Pot Studio</title>
+  <link rel="stylesheet" href="../common/shell.css">
   <link rel="stylesheet" href="./studio.css">
 </head>
 <body>
@@ -66,10 +67,23 @@
     <symbol id="icon-chevron" viewBox="0 0 24 24">
       <path d="m9 6 6 6-6 6"/>
     </symbol>
+    <symbol id="icon-select" viewBox="0 0 24 24">
+      <path d="m5 3 14 9-6 1-2 7-6-17Z"/>
+    </symbol>
+    <symbol id="icon-move" viewBox="0 0 24 24">
+      <path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3m12-6 3 3-3 3"/>
+    </symbol>
+    <symbol id="icon-rotate" viewBox="0 0 24 24">
+      <path d="M19 9a8 8 0 1 0 .6 4.7M19 4v5h-5"/>
+    </symbol>
+    <symbol id="icon-scale" viewBox="0 0 24 24">
+      <path d="M16 21H4V9h5m7 5v7M20 4 10 14M14 4h6v6"/>
+    </symbol>
+    <symbol id="icon-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" fill="currentColor" stroke="none"/></symbol>
   </svg>
 
-  <header class="app-header">
-    <div class="brand">
+  <header class="appbar app-header">
+    <div class="brand product-brand">
       <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#icon-mark"></use></svg></span>
       <strong>Pot Studio</strong>
     </div>
@@ -79,11 +93,11 @@
     </div>
     <div class="header-actions">
       <button type="button" class="button" data-action="publish"><svg class="icon" aria-hidden="true"><use href="#icon-upload"></use></svg>Publish</button>
-      <button type="button" class="button primary" data-action="playtest"><svg class="icon" aria-hidden="true"><use href="#icon-play"></use></svg>Playtest</button>
+      <button type="button" class="button primary" data-action="playtest" title="Playtest in this view (F5)"><svg class="icon" aria-hidden="true"><use href="#icon-play"></use></svg><span id="playtest-label">Playtest</span></button>
     </div>
   </header>
 
-  <nav class="toolbar" aria-label="Editing tools">
+  <nav class="toolbar" aria-label="Studio commands">
     <div class="toolbar-group">
       <button type="button" class="tool-button" data-action="new" title="New project"><svg class="icon" aria-hidden="true"><use href="#icon-new"></use></svg><span>New</span></button>
       <button type="button" class="tool-button" data-action="open" title="Open project (Ctrl/⌘+O)"><svg class="icon" aria-hidden="true"><use href="#icon-open"></use></svg><span>Open</span></button>
@@ -94,7 +108,7 @@
       <button type="button" class="tool-button icon-button" data-action="undo" title="Undo (Ctrl/⌘+Z)" aria-label="Undo"><svg class="icon" aria-hidden="true"><use href="#icon-undo"></use></svg></button>
       <button type="button" class="tool-button icon-button" data-action="redo" title="Redo (Ctrl/⌘+Shift+Z)" aria-label="Redo"><svg class="icon" aria-hidden="true"><use href="#icon-redo"></use></svg></button>
     </div>
-    <div class="toolbar-group">
+    <div class="toolbar-group primitives">
       <button type="button" class="tool-button primitive" data-action="add-box" title="Add box"><svg class="icon" aria-hidden="true"><use href="#icon-box"></use></svg><span>Box</span></button>
       <button type="button" class="tool-button primitive" data-action="add-sphere" title="Add sphere"><svg class="icon" aria-hidden="true"><use href="#icon-sphere"></use></svg><span>Sphere</span></button>
       <button type="button" class="tool-button primitive" data-action="add-cylinder" title="Add cylinder"><svg class="icon" aria-hidden="true"><use href="#icon-cylinder"></use></svg><span>Cylinder</span></button>
@@ -102,25 +116,61 @@
   </nav>
 
   <main class="workspace">
-    <section class="stage panel" aria-labelledby="scene-title">
-      <div class="panel-header">
-        <h1 id="scene-title">Scene</h1>
-        <button type="button" class="tool-button" data-action="frame" title="Frame selection or scene (F)"><svg class="icon" aria-hidden="true"><use href="#icon-frame"></use></svg><span>Frame</span></button>
+    <section class="stage" aria-label="Scene viewport">
+      <div class="stage-tools">
+        <div class="transform-tools" role="group" aria-label="Transform tools">
+          <button type="button" class="tool-button" data-mode="select" aria-pressed="true" title="Select (Q)"><svg class="icon" aria-hidden="true"><use href="#icon-select"></use></svg><span>Select</span></button>
+          <button type="button" class="tool-button" data-mode="translate" aria-pressed="false" title="Move (W)"><svg class="icon" aria-hidden="true"><use href="#icon-move"></use></svg><span>Move</span></button>
+          <button type="button" class="tool-button" data-mode="rotate" aria-pressed="false" title="Rotate (E)"><svg class="icon" aria-hidden="true"><use href="#icon-rotate"></use></svg><span>Rotate</span></button>
+          <button type="button" class="tool-button" data-mode="scale" aria-pressed="false" title="Scale (R)"><svg class="icon" aria-hidden="true"><use href="#icon-scale"></use></svg><span>Scale</span></button>
+        </div>
+        <label class="axis-space" title="Choose which axes the handles follow">
+          <span class="visually-hidden">Transform axes</span>
+          <select id="axes-space"><option value="world">World axes</option><option value="local">Local axes</option></select>
+        </label>
+        <div class="snap-controls">
+          <label class="snap-toggle"><input id="snap" type="checkbox" checked> Snap</label>
+          <details class="snap-settings">
+            <summary class="tool-button" title="Snap increments" aria-label="Snap increments">▾</summary>
+            <div class="snap-menu">
+              <label for="snap-distance">Move and scale<input id="snap-distance" type="number" value="0.5" min="0.05" max="16" step="any" required></label>
+              <label for="snap-angle">Rotate (°)<input id="snap-angle" type="number" value="15" min="1" max="180" step="any" required></label>
+            </div>
+          </details>
+        </div>
       </div>
       <div class="stage-viewport">
-        <canvas id="viewport" aria-label="Editable 3D scene"></canvas>
-        <div class="view-label" aria-hidden="true">Perspective</div>
+        <canvas id="viewport" tabindex="0" aria-label="Editable 3D scene"></canvas>
+        <div class="view-controls">
+          <label>
+            <span class="visually-hidden">Camera view</span>
+            <select id="camera-view">
+              <option value="">Camera view</option><option value="perspective">Perspective</option>
+              <option value="top">Top</option><option value="front">Front</option><option value="right">Right</option>
+            </select>
+          </label>
+          <button type="button" class="tool-button icon-button" data-action="frame" title="Frame selection (F)" aria-label="Frame selection"><svg class="icon" aria-hidden="true"><use href="#icon-frame"></use></svg></button>
+        </div>
         <div id="graphics-error" class="graphics-error" role="alert" hidden></div>
       </div>
-      <div class="scene-help">
+      <div class="scene-help" id="edit-help">
         <span><kbd>Drag</kbd> Orbit</span>
-        <span><kbd>Right drag</kbd> Pan</span>
+        <span><kbd>Right drag</kbd> Look</span>
+        <span><kbd>WASD</kbd> Fly while looking</span>
+        <span><kbd>Middle drag</kbd> Pan</span>
         <span><kbd>Scroll</kbd> Zoom</span>
         <span><kbd>F</kbd> Frame</span>
       </div>
+      <div class="scene-help" id="play-help" hidden>
+        <span><kbd>WASD</kbd> Move</span>
+        <span><kbd>Space</kbd> Jump</span>
+        <span><kbd>Drag</kbd> Look</span>
+        <span><kbd>Esc</kbd> Return to editing</span>
+      </div>
     </section>
 
-    <aside class="side-panels" aria-label="Scene editing">
+    <div class="dock-divider" id="dock-divider" role="separator" aria-label="Panel width" aria-orientation="vertical" tabindex="0" aria-valuemin="245" aria-valuemax="460" aria-valuenow="300"></div>
+    <aside id="editor-dock" class="side-panels" aria-label="Scene editing">
       <section class="outliner panel" aria-labelledby="outliner-title">
         <div class="panel-header">
           <h2 id="outliner-title">Outliner</h2>
@@ -129,13 +179,17 @@
             <button type="button" class="tool-button icon-button delete-button" data-action="delete" title="Delete object (Delete)" aria-label="Delete object"><svg class="icon" aria-hidden="true"><use href="#icon-trash"></use></svg></button>
           </div>
         </div>
+        <label class="outliner-search">
+          <span class="visually-hidden">Find a part</span>
+          <input id="object-search" type="search" placeholder="Find a part">
+        </label>
         <div class="outliner-scroll">
           <button type="button" id="select-world" class="outline-row" aria-pressed="true">
             <svg class="icon" aria-hidden="true"><use href="#icon-world"></use></svg>
             <span id="outliner-world"></span>
           </button>
           <details id="object-group" class="object-group" open>
-            <summary><svg class="icon disclosure-icon" aria-hidden="true"><use href="#icon-chevron"></use></svg>Objects <span id="object-count" class="object-count"></span></summary>
+            <summary><svg class="icon disclosure-icon" aria-hidden="true"><use href="#icon-chevron"></use></svg>Parts <span id="object-count" class="object-count"></span></summary>
             <ul id="object-list" aria-label="Scene objects"></ul>
             <p id="empty-objects" class="empty-objects" hidden>Use the toolbar to add a shape.</p>
           </details>

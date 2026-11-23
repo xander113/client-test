@@ -1,10 +1,11 @@
 import {
-  ACESFilmicToneMapping, Box3, BoxGeometry, BoxHelper, CapsuleGeometry, Color,
-  CylinderGeometry, DirectionalLight, FogExp2, GridHelper, Group, HemisphereLight,
+  ACESFilmicToneMapping, Box3, BoxGeometry, CapsuleGeometry, Color, EdgesGeometry,
+  CylinderGeometry, DirectionalLight, FogExp2, GridHelper, Group, HemisphereLight, LineBasicMaterial, LineSegments, MOUSE,
   Mesh, MeshStandardMaterial, PCFShadowMap, PerspectiveCamera, Ray, Raycaster,
   Scene, SphereGeometry, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 const AVATAR_RADIUS = 0.3;
 const AVATAR_HEIGHT = 1.65;
@@ -54,8 +55,11 @@ function overlapsHeight(box, feet) {
  * Draws a validated Pot scene and supports editing or play with the same parts.
  * Spawn and session positions denote the player's feet. Parts use center positions.
  */
-export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onError, onRestore } = {}) {
-  const isStudio = mode === 'studio';
+export function createViewport(canvas, {
+  mode = 'studio', onSelect, onTransform, onPreview, onDragging, onInput, onError, onRestore,
+} = {}) {
+  const hasEditor = mode === 'studio';
+  let isStudio = hasEditor;
   let renderer;
   try {
     renderer = new WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -87,18 +91,28 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
   sun.shadow.camera.far = 195;
   scene.add(hemisphere, sun, sun.target);
 
-  const camera = new PerspectiveCamera(isStudio ? 45 : 62, 1, 0.095, 480);
-  const orbit = isStudio ? new OrbitControls(camera, canvas) : null;
+  const playCamera = new PerspectiveCamera(62, 1, 0.095, 520);
+  const editCamera = hasEditor ? new PerspectiveCamera(45, 1, 0.095, 560) : null;
+  let camera = editCamera ?? playCamera;
+  // Register the gizmo first so grabbing a handle cannot also begin a camera orbit.
+  const gizmo = editCamera ? new TransformControls(editCamera, canvas) : null;
+  const orbit = editCamera ? new OrbitControls(editCamera, canvas) : null;
   if (orbit) {
     orbit.enableDamping = true;
-    orbit.dampingFactor = 0.12;
+    orbit.dampingFactor = 0.15;
     orbit.enablePan = true;
+    orbit.mouseButtons = { LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.PAN, RIGHT: null };
     orbit.maxDistance = 380;
-    orbit.maxPolarAngle = Math.PI * 0.495;
+    orbit.maxPolarAngle = Math.PI - 0.015;
     orbit.minDistance = 1;
   }
+  if (gizmo) {
+    gizmo.setSize(0.78);
+    gizmo.detach();
+    scene.add(gizmo.getHelper());
+  }
 
-  const grid = isStudio ? new GridHelper(320, 320, '#63898b', '#7f9f9e') : null;
+  const grid = hasEditor ? new GridHelper(240, 240, '#7c948a', '#a7b8ac') : null;
   if (grid) {
     grid.position.y = 0.012;
     grid.material.transparent = true;
@@ -113,7 +127,10 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
     cylinder: new CylinderGeometry(0.5, 0.5, 1, 24),
     torso: new CapsuleGeometry(0.31, 0.47, 6, 14),
   };
-  const outline = isStudio ? new BoxHelper(undefined, '#09b734') : null;
+  const outline = hasEditor ? new LineSegments(
+    new EdgesGeometry(geometries.box),
+    new LineBasicMaterial({ color: '#078b2a', transparent: true, opacity: 0.9 }),
+  ) : null;
   if (outline) {
     outline.visible = false;
     outline.material.depthTest = false;
@@ -128,8 +145,9 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
   const partSize = new Vector3();
   const spawn = new Vector3(0, 1, 0);
   const position = new Vector3();
-  const self = isStudio ? null : avatar(geometries, '#09b734');
-  if (self) people.add(self.group);
+  const self = avatar(geometries, '#09b734');
+  self.group.visible = !hasEditor;
+  people.add(self.group);
   const keys = new Set();
   const raycaster = new Raycaster();
   const pointer = new Vector2();
@@ -137,6 +155,11 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
   const cameraTarget = new Vector3();
   const cameraOffset = new Vector3();
   const intersection = new Vector3();
+  const authoritative = new Vector3();
+  const flyDirection = new Vector3();
+  const flyRight = new Vector3();
+  const flyMotion = new Vector3();
+  const worldUp = new Vector3(0, 1, 0);
   const center = new Vector3();
   const orbitOffset = new Vector3(1, 0.71, 1).normalize();
   const listeners = new AbortController();
@@ -144,12 +167,23 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
   let pointerDown = null;
   let selected = null;
   let playing = false;
-  let moving = false;
+  let networked = false;
+  let hasAuthority = false;
+  let jumpSequence = 0;
+  let lastInputKey = '';
+  let lastInputTime = 0;
+  let focusMotion;
+  let flyPointer = null;
+  let flyDistance = 8;
+  let flyYaw = 0;
+  let flyPitch = 0;
+  let visible = true;
+  let tool = 'select';
+  let canceled = false;
   let jumped = false;
   let grounded = false;
   let frame = 0;
   let lastFrame = 0;
-  let lastPose = 0;
   let fallSpeed = 0;
   let yaw = 0;
   let heading = yaw;
@@ -162,8 +196,19 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
   function refreshOutline() {
     if (!outline) return;
     const part = parts.get(selected);
-    outline.visible = Boolean(part);
-    if (part) outline.setFromObject(part.mesh);
+    outline.visible = isStudio && Boolean(part);
+    if (part && isStudio) {
+      outline.position.copy(part.mesh.position);
+      outline.quaternion.copy(part.mesh.quaternion);
+      outline.scale.copy(part.mesh.scale).multiplyScalar(1.001);
+    }
+    if (!gizmo.dragging) {
+      if (part && isStudio && tool !== 'select' && flyPointer === null) {
+        if (gizmo.object !== part.mesh) gizmo.attach(part.mesh);
+      } else if (gizmo.object) {
+        gizmo.detach();
+      }
+    }
     redraw = true;
   }
 
@@ -176,13 +221,12 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
     }
     fallSpeed = 0;
     grounded = false;
-    moving = true;
     renderer.shadowMap.needsUpdate = true;
     redraw = true;
   }
 
-  function frameOrbit(id) {
-    if (!orbit) return;
+  function frameOrbit(id, view, instant = false) {
+    if (!orbit || !isStudio) return;
     const target = parts.get(id)?.box || bounds;
     if (target.isEmpty()) {
       center.copy(spawn);
@@ -191,14 +235,117 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
       target.getCenter(center);
       target.getSize(partSize);
     }
-    const radius = Math.max(2, partSize.length() * 0.5);
-    const fov = camera.fov * Math.PI / 360;
-    const visibleAngle = Math.atan(Math.tan(fov) * Math.min(1, camera.aspect));
-    const distance = Math.min(orbit.maxDistance, Math.max(4.5, radius / Math.sin(visibleAngle) * 1.06));
-    camera.position.copy(center).addScaledVector(orbitOffset, distance);
-    orbit.target.copy(center);
-    orbit.update();
+    const radius = Math.max(1, partSize.length() * 0.5);
+    const visibleAngle = Math.atan(Math.tan(editCamera.fov * Math.PI / 360) * Math.min(1, editCamera.aspect));
+    const distance = Math.min(orbit.maxDistance, Math.max(2.6, radius / Math.sin(visibleAngle) * 1.02));
+    const directions = { top: [0, 1, 0.0151], front: [0, 0, 1], right: [1, 0, 0] };
+    const direction = editCamera.position.clone().sub(orbit.target).normalize();
+    if (view === 'perspective' || direction.lengthSq() === 0) direction.copy(orbitOffset);
+    else if (directions[view]) direction.fromArray(directions[view]).normalize();
+    const destination = center.clone().addScaledVector(direction, distance);
+    if (instant || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      editCamera.position.copy(destination);
+      orbit.target.copy(center);
+      orbit.update();
+    } else {
+      focusMotion = {
+        start: performance.now(), position: editCamera.position.clone(), target: orbit.target.clone(),
+        destination, center: center.clone(),
+      };
+    }
     redraw = true;
+  }
+
+  function updateFly(dt) {
+    if (flyPointer === null) return;
+    flyDirection.set(-Math.sin(flyYaw) * Math.cos(flyPitch), Math.sin(flyPitch),
+      -Math.cos(flyYaw) * Math.cos(flyPitch));
+    flyRight.crossVectors(flyDirection, worldUp).normalize();
+    const forward = Number(keys.has('KeyW')) - Number(keys.has('KeyS'));
+    const side = Number(keys.has('KeyD')) - Number(keys.has('KeyA'));
+    const lift = Number(keys.has('KeyE')) - Number(keys.has('KeyQ'));
+    flyMotion.set(0, lift, 0).addScaledVector(flyDirection, forward).addScaledVector(flyRight, side);
+    if (flyMotion.lengthSq() > 0) editCamera.position.addScaledVector(flyMotion.normalize(), 16 * dt);
+    orbit.target.copy(editCamera.position).addScaledVector(flyDirection, flyDistance);
+    editCamera.lookAt(orbit.target);
+    redraw = true;
+  }
+
+  function setTool(mode, space, snapping, distance, angle) {
+    if (!gizmo || gizmo.dragging) return;
+    tool = mode;
+    gizmo.setMode(mode === 'select' ? 'translate' : mode);
+    gizmo.setSpace(space);
+    gizmo.setTranslationSnap(snapping ? distance : null);
+    gizmo.setRotationSnap(snapping ? angle * Math.PI / 180 : null);
+    gizmo.setScaleSnap(snapping ? distance : null);
+    refreshOutline();
+  }
+
+  function transformValues(mesh) {
+    const rounded = (v) => Math.round(v * 1e4) / 1e4;
+    return {
+      position: mesh.position.toArray().map(rounded),
+      size: mesh.scale.toArray().map(rounded),
+      rotation: [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z].map((v) => rounded(v * 180 / Math.PI)),
+    };
+  }
+
+  gizmo?.addEventListener('change', () => { redraw = true; });
+  gizmo?.addEventListener('dragging-changed', ({ value }) => {
+    orbit.enabled = isStudio && !value;
+    onDragging?.(value);
+  });
+  gizmo?.addEventListener('mouseDown', () => {
+    canceled = false;
+    focusMotion = null;
+    canvas.focus({ preventScroll: true });
+  });
+  gizmo?.addEventListener('objectChange', () => {
+    const mesh = gizmo.object;
+    mesh.position.clamp(positionMin, positionMax);
+    mesh.scale.clamp(sizeMin, sizeMax);
+    refreshOutline();
+    onPreview?.(transformValues(mesh));
+    renderer.shadowMap.needsUpdate = true;
+  });
+  gizmo?.addEventListener('mouseUp', () => {
+    if (!canceled && gizmo.object) onTransform?.(selected, transformValues(gizmo.object));
+  });
+
+  const positionMin = new Vector3(-250, -40, -250);
+  const positionMax = new Vector3(250, 250, 250);
+  const sizeMin = new Vector3(0.1, 0.1, 0.1);
+  const sizeMax = new Vector3(128, 128, 128);
+
+  function cancelTransform() {
+    if (!gizmo?.dragging) return false;
+    canceled = true;
+    gizmo.reset();
+    gizmo.pointerUp(null);
+    return true;
+  }
+
+  function playtest(enabled) {
+    if (!hasEditor || isStudio !== enabled) return;
+    cancelTransform();
+    focusMotion = null;
+    clearInput();
+    isStudio = !enabled;
+    camera = enabled ? playCamera : editCamera;
+    scene.background.set(enabled ? '#dceef8' : '#eaf2f1');
+    scene.fog.color.copy(scene.background);
+    orbit.enabled = !enabled;
+    people.visible = enabled;
+    grid.visible = !enabled;
+    renderer.shadowMap.needsUpdate = true;
+    if (enabled) {
+      resetPlayer();
+      yaw = 0;
+      heading = 0;
+    }
+    setPlaying(enabled);
+    refreshOutline();
   }
 
   function positionLight() {
@@ -236,9 +383,10 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
       mesh.material.color.set(object.color);
       mesh.position.fromArray(object.position);
       mesh.scale.fromArray(object.size);
-      partSize.copy(mesh.scale).multiplyScalar(0.5);
-      box.min.copy(mesh.position).sub(partSize);
-      box.max.copy(mesh.position).add(partSize);
+      const rotation = object.rotation;
+      mesh.rotation.set(rotation[0] * Math.PI / 180, rotation[1] * Math.PI / 180, rotation[2] * Math.PI / 180);
+      mesh.updateMatrixWorld(true);
+      box.setFromObject(mesh);
       bounds.union(box);
       if (object.solid) colliderBounds.push(box);
     }
@@ -252,7 +400,7 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
 
     if (newWorld) {
       selected = null;
-      if (isStudio) frameOrbit();
+      if (isStudio) frameOrbit(undefined, 'perspective', true);
       else resetPlayer();
     }
 
@@ -271,7 +419,16 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
     if (isStudio) return;
     const present = new Set();
     for (const peer of peers) {
-      if (peer.id === selfId) continue;
+      if (peer.id === selfId) {
+        authoritative.set(peer.x, peer.y, peer.z);
+        if (networked && !hasAuthority) {
+          position.copy(authoritative);
+          hasAuthority = true;
+          fallSpeed = 0;
+          grounded = false;
+        }
+        continue;
+      }
       present.add(peer.id);
       let data = remoteAvatars.get(peer.id);
       if (!data) {
@@ -358,17 +515,25 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
       if (jumped && grounded) fallSpeed = JUMP_SPEED;
       jumped = false;
       moveVertical(dt);
+      if (networked) {
+        sendInput(strafe, advance, now);
+        if (hasAuthority) {
+          const drift = position.distanceTo(authoritative);
+          if (drift > 3.5) {
+            position.copy(authoritative);
+            fallSpeed = 0;
+            grounded = false;
+          } else if (!strafe && !advance && grounded && Math.abs(position.y - authoritative.y) < 0.2) {
+            const recovery = 1 - Math.exp(-5 * dt);
+            position.x += (authoritative.x - position.x) * recovery;
+            position.z += (authoritative.z - position.z) * recovery;
+          }
+        }
+      }
       if (previousX !== position.x || previousY !== position.y ||
         previousZ !== position.z || previousHeading !== heading) {
-        moving = true;
-        redraw = true;
+            redraw = true;
         renderer.shadowMap.needsUpdate = true;
-      }
-      // Keep the final pose after input stops, while avoiding frame-rate network traffic.
-      if (now - lastPose >= 65 && moving) {
-        onPose?.(getPose());
-        lastPose = now;
-        moving = false;
       }
     }
 
@@ -406,10 +571,22 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
     return { x: position.x, y: position.y, z: position.z, yaw: heading };
   }
 
+  function sendInput(x, z, now, force = false) {
+    const cameraYaw = Math.atan2(Math.sin(yaw), Math.cos(yaw));
+    const key = [x, z, Math.round(cameraYaw * 50), jumpSequence].join('/');
+    if (!force && (now - lastInputTime < 35 || (key === lastInputKey && now - lastInputTime < 180))) return;
+    lastInputTime = now;
+    lastInputKey = key;
+    onInput?.({ x, z, yaw: cameraYaw, jump: jumpSequence });
+  }
+
   function clearInput() {
     keys.clear();
     jumped = false;
     pointerDown = null;
+    flyPointer = null;
+    if (networked) sendInput(0, 0, performance.now(), true);
+    if (orbit) orbit.enabled = isStudio && !gizmo.dragging;
   }
 
   function setPlaying(enabled) {
@@ -418,16 +595,44 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
     redraw = true;
   }
 
+  function setNetworked(enabled) {
+    networked = enabled;
+    hasAuthority = false;
+    lastInputKey = '';
+    lastInputTime = 0;
+  }
+
   function listen(target, event, handler, options) {
     target.addEventListener(event, handler, { ...options, signal: listeners.signal });
   }
 
   listen(canvas, 'pointerdown', event => {
-    if (event.button !== 0 && (!playing || event.button !== 2)) return;
+    focusMotion = null;
+    if (isStudio && event.button === 2 && !gizmo.dragging) {
+      canvas.focus({ preventScroll: true });
+      editCamera.getWorldDirection(flyDirection);
+      flyYaw = Math.atan2(-flyDirection.x, -flyDirection.z);
+      flyPitch = Math.asin(flyDirection.y);
+      flyDistance = Math.max(1, editCamera.position.distanceTo(orbit.target));
+      flyPointer = event.pointerId;
+      orbit.enabled = false;
+      refreshOutline();
+      canvas.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (gizmo?.dragging || (event.button !== 0 && (!playing || event.button !== 2))) return;
+    canvas.focus({ preventScroll: true });
     pointerDown = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
     if (!isStudio && playing) canvas.setPointerCapture(event.pointerId);
   });
+
   listen(canvas, 'pointermove', event => {
+    if (flyPointer === event.pointerId) {
+      flyYaw -= event.movementX * 0.005;
+      flyPitch = Math.max(-1.52, Math.min(1.52, flyPitch - event.movementY * 0.005));
+      redraw = true;
+      return;
+    }
     if (pointerDown?.id !== event.pointerId) return;
     const dx = event.clientX - pointerDown.x;
     const dy = event.clientY - pointerDown.y;
@@ -440,7 +645,17 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
       redraw = true;
     }
   });
+
+  function stopFly() {
+    if (flyPointer === null) return;
+    flyPointer = null;
+    keys.clear();
+    orbit.enabled = isStudio;
+    refreshOutline();
+  }
+
   listen(canvas, 'pointerup', event => {
+    if (flyPointer === event.pointerId) stopFly();
     if (pointerDown?.id !== event.pointerId) return;
     const { moved, x, y } = pointerDown;
     pointerDown = null;
@@ -453,27 +668,34 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
     const hit = raycaster.intersectObjects(world.children, false)[0];
     onSelect?.(hit?.object.userData.id ?? null);
   });
-  listen(canvas, 'pointercancel', () => { pointerDown = null; });
-  listen(canvas, 'lostpointercapture', () => { pointerDown = null; });
-  listen(canvas, 'blur', clearInput);
+  listen(canvas, 'pointercancel', () => {
+    cancelTransform();
+    pointerDown = null;
+    stopFly();
+  });
+  listen(canvas, 'lostpointercapture', () => { stopFly(); });
+  listen(canvas, 'blur', () => { cancelTransform(); stopFly(); clearInput(); });
   listen(canvas, 'contextmenu', event => event.preventDefault());
-  if (!isStudio) {
-    listen(canvas, 'wheel', event => {
-      if (!playing) return;
-      event.preventDefault();
-      zoom = Math.max(2.5, Math.min(14, zoom * Math.exp(event.deltaY * 0.0018)));
-      redraw = true;
-    }, { passive: false });
-  }
+  listen(canvas, 'wheel', event => {
+    focusMotion = null;
+    if (!playing) return;
+    event.preventDefault();
+    zoom = Math.max(2.5, Math.min(14, zoom * Math.exp(event.deltaY * 0.0018)));
+    redraw = true;
+  }, { passive: false });
 
   listen(window, 'keydown', event => {
     if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey ||
       event.target?.matches?.('input, textarea, select, button, [contenteditable]')) return;
-    if (isStudio && event.code === 'KeyF' && document.activeElement === canvas) {
-      frameOrbit(selected);
+    if (flyPointer !== null && /^Key[WASDQE]$/.test(event.code)) {
+      event.preventDefault();
+      keys.add(event.code);
     } else if (playing && MOVE_KEYS.has(event.code)) {
       event.preventDefault();
-      if (event.code === 'Space' && !event.repeat) jumped = true;
+      if (event.code === 'Space' && !event.repeat) {
+        jumped = true;
+        jumpSequence++;
+      }
       keys.add(event.code);
     }
   });
@@ -500,21 +722,38 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
 
   function resize() {
     const { width, height } = canvas.getBoundingClientRect();
-    if (!width || !height) return;
+    visible = Boolean(width && height);
+    if (!visible) { lastFrame = 0; return; }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
     renderer.setSize(Math.round(width), Math.round(height), false);
-    camera.aspect = width / height;
-    camera.updateProjectionMatrix();
+    for (const view of [playCamera, editCamera]) {
+      if (!view) continue;
+      view.aspect = width / height;
+      view.updateProjectionMatrix();
+    }
     redraw = true;
   }
 
   function draw(now) {
     frame = requestAnimationFrame(draw);
-    if (contextLost || document.hidden) return;
+    if (contextLost || document.hidden || !visible) return;
     const dt = lastFrame ? Math.min((now - lastFrame) / 1000, 0.05) : 0;
     lastFrame = now;
-    const orbitMoved = orbit?.update();
-    if (self) updatePlayer(dt, now);
+    let orbitMoved = false;
+    if (isStudio) {
+      if (focusMotion) {
+        const progress = Math.min(1, (now - focusMotion.start) / 230);
+        const blend = 1 - (1 - progress) ** 3;
+        editCamera.position.lerpVectors(focusMotion.position, focusMotion.destination, blend);
+        orbit.target.lerpVectors(focusMotion.target, focusMotion.center, blend);
+        if (progress === 1) focusMotion = null;
+        redraw = true;
+      }
+      if (flyPointer !== null) updateFly(dt);
+      else if (!gizmo.dragging) orbitMoved = orbit.update();
+    } else {
+      updatePlayer(dt, now);
+    }
     if (redraw || orbitMoved) renderer.render(scene, camera);
     redraw = false;
   }
@@ -522,7 +761,7 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
   const observer = new ResizeObserver(resize);
   observer.observe(canvas);
   resize();
-  frameOrbit();
+  frameOrbit(undefined, 'perspective', true);
   positionLight();
   frame = requestAnimationFrame(draw);
 
@@ -531,6 +770,18 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
     setSelected,
     setAvatars,
     setPlaying,
+    setNetworked,
+    setTool,
+    cancelTransform,
+    playtest,
+    restart() {
+      jumpSequence = 0;
+      yaw = 0;
+      heading = 0;
+      pitch = 0.34;
+      zoom = 8.5;
+      resetPlayer();
+    },
     focus: frameOrbit,
     getPose,
     dispose() {
@@ -539,6 +790,7 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
       listeners.abort();
       observer.disconnect();
       cancelAnimationFrame(frame);
+      gizmo?.dispose();
       orbit?.dispose();
       grid?.geometry.dispose();
       grid?.material.dispose();
@@ -547,7 +799,7 @@ export function createViewport(canvas, { mode = 'studio', onSelect, onPose, onEr
       sun.shadow.dispose();
       for (const part of parts.values()) part.mesh.material.dispose();
       for (const data of remoteAvatars.values()) disposeAvatar(data);
-      if (self) disposeAvatar(self);
+      disposeAvatar(self);
       for (const geometry of Object.values(geometries)) geometry.dispose();
       renderer.dispose();
     },

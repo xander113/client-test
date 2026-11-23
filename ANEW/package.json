@@ -1,6 +1,6 @@
 {
   "name": "pot-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Pot Client and Pot Studio for desktop",
   "author": "Pot",
@@ -12,19 +12,19 @@
   "scripts": {
     "postinstall": "node build/setup.mjs",
     "dev": "vite",
-    "build": "vite build",
+    "build": "node build/native.mjs && vite build",
     "start": "npm run start:client",
     "start:client": "npm run build && electron .",
     "start:studio": "npm run build && electron . --studio",
-    "service:worlds": "node services/worlds/index.mjs",
-    "service:render": "node services/render/index.mjs",
-    "test": "node --test test/*.test.mjs",
+    "service:worlds": "node build/run-service.mjs worlds",
+    "service:render": "node build/run-service.mjs render",
+    "test": "cd native && go test ./...",
     "package:client": "node build/package.mjs client",
     "package:studio": "node build/package.mjs studio",
     "package:desktop": "node build/package.mjs all"
   },
   "dependencies": {
-    "ws": "8.23.0"
+    "@msgpack/msgpack": "^3.1.3"
   },
   "devDependencies": {
     "electron": "45.4.1",
