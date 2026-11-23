@@ -11,7 +11,10 @@ checkout's `Contribs` directory for MSBuild.
 TESTEX.exe
 ```
 
-The builder finds the checkout beside the executable or in the current directory.
+Download or clone the full repository before running the builder. The builder
+finds the checkout beside the executable or in the current directory.
+When double-clicked, TESTEX keeps its console open until you press Enter.
+It prints the location of its build log in your Windows temporary directory.
 Use `-repo "C:\src\CLIENT-MASTER"` for a separate checkout location and
 `-msbuild "C:\path\to\MSBuild.exe"` to select MSBuild explicitly.
 
@@ -32,7 +35,7 @@ To rebuild the builder itself with Go, run this command from the checkout root
 with `GOOS=windows`, `GOARCH=amd64`, and `CGO_ENABLED=0`:
 
 ```text
-go build -trimpath -ldflags="-s -w" -o TESTEX.exe tools/testex/main.go
+go build -trimpath -ldflags="-s -w" -o TESTEX.exe tools/testex/main.go tools/testex/console_windows.go
 ```
 
 ## Build and test Zbloc on Mac with TEXTEXMAC

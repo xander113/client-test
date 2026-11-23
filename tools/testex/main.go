@@ -49,13 +49,26 @@ var buildSteps = []buildStep{
 	},
 }
 
-func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		if !errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(os.Stderr, "TESTEX:", err)
-			os.Exit(1)
-		}
+func runLogged(args []string, stdout, stderr io.Writer) int {
+	logFile, err := os.CreateTemp("", "TESTEX-*.log")
+	if err != nil {
+		fmt.Fprintf(stderr, "Could not create a build log: %v\n", err)
+	} else {
+		defer logFile.Close()
+		stdout = io.MultiWriter(stdout, logFile)
+		stderr = io.MultiWriter(stderr, logFile)
+		fmt.Fprintln(stdout, "Build log:", logFile.Name())
 	}
+	fmt.Fprintln(stdout, "TESTEX builds Zbloc Player and Studio.")
+	if err := run(args, stdout, stderr); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		fmt.Fprintln(stderr, "TESTEX:", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "\nBuild complete.")
+	return 0
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
@@ -85,6 +98,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	fmt.Fprintln(stdout, "Checkout:", root)
+	fmt.Fprintln(stdout, "MSBuild:", msbuild)
 	return build(root, msbuild, stdout, stderr)
 }
 
@@ -104,7 +119,7 @@ func findRepo(path string) (string, error) {
 		return "", err
 	}
 	if !isFile(filepath.Join(root, solution)) {
-		return "", fmt.Errorf("could not find %s in %q; use -repo to select the checkout", solution, root)
+		return "", fmt.Errorf("could not find %s in %q. Download or clone the full client-test repository and run TESTEX.exe from its root, or select that directory with -repo", solution, root)
 	}
 	return root, nil
 }
