@@ -23,13 +23,13 @@ namespace RBX {
 		class NameMap;
 		static NameMap& map();
 
-		template<const char* const& sName>
+		template<const char* const* sName>
 		static const Name& doDeclare()
 		{
-			static const Name& n = declare(sName);
+			static const Name& n = declare(*sName);
 			return n;
 		}
-		template<const char* const& sName>
+		template<const char* const* sName>
 		static void callDoDeclare()
 		{
 			doDeclare<sName>();
@@ -54,10 +54,11 @@ namespace RBX {
         {
             return declare(sName.c_str());
         }
-		template<const char* const& sName>
+		// Use the address of the name variable even when it contains a null name.
+		template<const char* const* sName>
 		static const Name& declare()
 		{
-			if(sName == NULL)
+			if (*sName == NULL)
 				return getNullName();
 
 			static boost::once_flag flag = BOOST_ONCE_INIT;
@@ -156,7 +157,7 @@ namespace RBX {
 		Named(Arg0 arg0, Arg1 arg1, Arg2 arg2, Arg3 arg3) : BaseClass(arg0, arg1, arg2, arg3) {}
 
 		static const Name& name() {
-			return Name::declare<sName>();
+			return Name::declare<&sName>();
 		}
 		virtual const Name& getName() const {
 			return name();

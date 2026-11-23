@@ -10,14 +10,8 @@
 
 #include "v8xml/SerializerBinary.h"
 
+#include <algorithm>
 #include <map>
-
-#ifdef _WIN32
-   using std::mem_fun1;
-#else
-#include <ext/functional>
-   using __gnu_cxx::mem_fun1;
-#endif
 
 using std::string;
 using std::vector;
@@ -93,13 +87,8 @@ public:
 
 	bool resolveRefs()
 	{
-		int count = 0;
-		
-		count += count_if(
-			idrefBindings.begin(), 
-			idrefBindings.end(), 
-			std::bind1st(mem_fun1(&ArchiveBinder::resolveIDREF),this)
-		);
+		const std::size_t count = std::count_if(idrefBindings.begin(), idrefBindings.end(),
+			[this](const IDREFBinding& binding) { return resolveIDREF(binding); });
 
 		return Super::resolveRefs() && (count == idrefBindings.size());
 	}
