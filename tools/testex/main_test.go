@@ -177,10 +177,10 @@ func TestPlayerBuildOmitsStudioDependencies(t *testing.T) {
 	if got := strings.Join(names, ","); got != "shared dependencies,ShaderCompiler,CoreScript converter,Zbloc Player" {
 		t.Fatalf("unexpected player build steps: %s", got)
 	}
-	if !strings.Contains(steps[0].targets, ";DSBaseClasses") {
-		t.Fatal("modern build must rebuild the DirectShow base classes")
+	if !strings.HasSuffix(steps[0].targets, `;3rd Party\DSBaseClasses`) {
+		t.Fatalf("modern build must rebuild DirectShow from the 3rd Party solution folder, got %q", steps[0].targets)
 	}
-	if strings.Contains(stepsFor("player", false)[0].targets, ";DSBaseClasses") {
+	if strings.Contains(stepsFor("player", false)[0].targets, "DSBaseClasses") {
 		t.Fatal("legacy build should use its existing DirectShow library")
 	}
 }

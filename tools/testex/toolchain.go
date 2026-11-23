@@ -248,7 +248,7 @@ func stepsFor(component string, modern bool) []buildStep {
 			}
 		case "shared dependencies":
 			if modern {
-				step.targets += ";DSBaseClasses"
+				step.targets += `;3rd Party\DSBaseClasses`
 			}
 		}
 		steps = append(steps, step)
