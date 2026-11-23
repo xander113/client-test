@@ -1,6 +1,7 @@
 # Build Zbloc for development with TESTEX.exe
 
-Run `TESTEX.exe` from a Visual Studio 2012 Developer Command Prompt on 64-bit Windows.
+Run `TESTEX.exe` on 64-bit Windows. A Visual Studio 2012 Developer Command
+Prompt can provide the toolchain for a custom installation.
 Install Visual Studio 2012 Update 5 with the C++ and MFC tools, and prepare the
 repository's Win32 Qt 4.8.5, Boost 1.56, and OpenSSL dependencies using
 [BUILDING_CONTRIBS.md](BUILDING_CONTRIBS.md). Use a short checkout path without
@@ -15,6 +16,10 @@ Download or clone the full repository before running the builder. The builder
 finds the checkout beside the executable or in the current directory.
 When double-clicked, TESTEX keeps its console open until you press Enter.
 It prints the location of its build log in your Windows temporary directory.
+TESTEX checks for the Visual C++ MSBuild targets before building. If it reports
+that Microsoft.Cpp.Default.props is missing, install or repair the C++ tools
+for Visual Studio 2012. The MSBuild executable from the .NET Framework
+does not provide those targets by itself.
 Use `-repo "C:\src\CLIENT-MASTER"` for a separate checkout location and
 `-msbuild "C:\path\to\MSBuild.exe"` to select MSBuild explicitly.
 
