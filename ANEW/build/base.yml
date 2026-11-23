@@ -1,4 +1,5 @@
 asar: true
+publish: null
 artifactName: "${productName}-${version}-${arch}.${ext}"
 files:
   - dist/**/*
