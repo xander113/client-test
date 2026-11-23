@@ -12,7 +12,7 @@ Pot Client and Pot Studio are native desktop apps. Lua runs the LÖVE windows, t
 
 ## Try the scripted world
 
-Install with the Windows Setup executable or extract the macOS Universal archive. Both include the runtime. Start **Terrace Park** in Client or **Terrace Workshop** in Studio. Press **E** near the gold switch to open the green gate. Step on the blue plate to light it up. Local testing needs no domain.
+Run the Windows Setup executable or extract the macOS Universal archive and move the app to Applications. Both include the runtime. If macOS asks you to approve an ad hoc signed developer build, use **Open Anyway** in **System Settings → Privacy & Security**. Start **Terrace Park** in Client or **Terrace Workshop** in Studio. Press **E** near the gold switch to open the green gate. Step on the blue plate to light it up. Local testing needs no domain.
 
 In Studio, use **Q** Select, **W** Move, **E** Rotate, **R** Scale, **F** Frame, and **F5** Playtest. Use the visible axis and snap controls or enter transforms in Properties. Press **Esc** to cancel a drag or return from playtest. Use **WASD**, mouse drag, **Space**, and **E** to move, look, jump, and interact in play.
 
@@ -67,7 +67,7 @@ Run `lune run luau/main.luau worlds /absolute/path/to/ANEW/luau` to start a worl
 
 ## Build and test
 
-Use Python 3.10 or later. The packager verifies the checksums of pinned LÖVE 11.5 and Lune 0.11.1 releases. Install NSIS 3 for Windows Setup executables. The macOS build emits a Universal archive and creates a `.pkg` when run with native macOS tools. Set `POT_MAC_APP_IDENTITY` and `POT_MAC_INSTALLER_IDENTITY` for release signing.
+Use Python 3.10 or later. The packager verifies the checksums of pinned LÖVE 11.5 and Lune 0.11.1 releases. Install NSIS 3 for Windows Setup executables. The macOS build emits an ad hoc signed Universal app archive and creates a `.pkg` when run with native macOS tools. Install `rcodesign` to build the macOS archive on another OS. Set `POT_MAC_APP_IDENTITY` and `POT_MAC_INSTALLER_IDENTITY` on Mac for release signing. [rcodesign releases](https://github.com/indygreg/apple-platform-rs/releases)
 
 ```sh
 python tools/build.py windows

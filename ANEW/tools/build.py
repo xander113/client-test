@@ -161,7 +161,7 @@ def windows(product, output, nsis):
             print(installer, flush=True)
 
 
-def macos(product, output):
+def macos(product, output, cross_signer):
     title = f"Pot {product.title()}"
     with TemporaryDirectory(dir=output, prefix=".mac-") as temp:
         stage = Path(temp)
@@ -179,9 +179,17 @@ def macos(product, output):
                     NSHumanReadableCopyright="Pot")
         data.pop("CFBundleDocumentTypes", None)
         config.write_bytes(plistlib.dumps(data))
+        # LÖVE 11.5 ships a FreeType framework with no identifier in its plist.
+        freetype = app / "Contents/Frameworks/freetype.framework/Versions/A/Resources/Info.plist"
+        framework_data = plistlib.loads(freetype.read_bytes())
+        if "CFBundleIdentifier" not in framework_data:
+            framework_data["CFBundleIdentifier"] = "org.freetype.freetype"
+            freetype.write_bytes(plistlib.dumps(framework_data))
         if sys.platform == "darwin":
             identity = os.environ.get("POT_MAC_APP_IDENTITY", "-")
             subprocess.run(["codesign", "--force", "--deep", "--sign", identity, str(app)], check=True)
+        else:
+            subprocess.run([cross_signer, "sign", str(app)], check=True)
         portable = output / f"{title}-{VERSION}-macOS-universal.zip"
         zip_tree(app, portable, app.name)
         print(portable, flush=True)
@@ -213,8 +221,11 @@ def main():
     parser.add_argument("--product", choices=["client", "studio", "both"], default="both")
     parser.add_argument("--output", type=Path, default=ROOT / "artifacts")
     parser.add_argument("--makensis", default=shutil.which("makensis"))
+    parser.add_argument("--rcodesign", default=shutil.which("rcodesign"), help="Sign macOS app bundles on another OS")
     parser.add_argument("--love", type=Path, help="Run a dev bundle with this installed LÖVE 11.5")
     options = parser.parse_args()
+    if options.target in ("macos", "all") and sys.platform != "darwin" and not options.rcodesign:
+        parser.error("Install rcodesign or pass --rcodesign when building macOS app bundles on this OS.")
     options.output = options.output.resolve()
     options.output.mkdir(parents=True, exist_ok=True)
     (ROOT / "WEBSERVICE").mkdir(exist_ok=True)
@@ -229,7 +240,7 @@ def main():
             if options.target in ("windows", "all"):
                 windows(product, options.output, options.makensis)
             if options.target in ("macos", "all"):
-                macos(product, options.output)
+                macos(product, options.output, options.rcodesign)
 
 
 if __name__ == "__main__":
