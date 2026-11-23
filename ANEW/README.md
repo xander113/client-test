@@ -1,107 +1,79 @@
-# Pot
+# Pot 0.3
 
-Pot is a desktop sandbox with a playable client, a 3D place editor, and a headless thumbnail renderer. Pot Client and Pot Studio share a light desktop interface with Pot green `#09b734`.
+Pot Client and Pot Studio are native desktop apps. Lua runs the LÖVE windows, tools, and 3D viewport. Luau runs the world model, movement, scripts, publishing, and PotRenderService in a separate Lune runtime. Projects use binary `.pot` files. The desktop apps communicate with the runtime using length-prefixed MessagePack over authenticated loopback.
 
-| Component | Source | Purpose |
-| --- | --- | --- |
-| Pot Client | [renderer/client](renderer/client/) | Browse places, play solo, and join live sessions. |
-| Pot Studio | [renderer/studio](renderer/studio/) | Build, save, playtest, and publish places. |
-| Pot runtime | [native](native/) | Go project codec, desktop service, world storage, session simulation, and network replication. |
-| PotRenderService | [native/internal/thumb](native/internal/thumb/) | Render the same place geometry to PNG through local or hosted PRS. |
-| WEBSERVICE | `WEBSERVICE/` | Reserved empty directory for the future website. The install step creates it. |
-
-## Run and test on Windows and macOS
-
-Install Node.js 22.12 or later and Go 1.23 or later. Run from the repository checkout.
-
-```sh
-cd ANEW
-npm ci
-npm run start:studio
-```
-
-Use `npm run start:client` for Pot Client. The first install and build download dependencies. The applications then start local services on loopback and can operate without internet access or a domain. Both apps see the same library under the operating system’s application data directory in `Pot/worlds`. In an open client, select **Worlds** to refresh the catalog after publishing from Studio.
-
-## Edit and playtest
-
-| Action | Control |
+| Directory | Contents |
 | --- | --- |
-| Select a part | Click it in the viewport or Outliner. Use **Find a part** to filter the Outliner. |
-| Move, rotate, and scale | Select **Move**, **Rotate**, or **Scale**, then drag a colored axis or ring. Use **W**, **E**, or **R** to switch tools and **Q** to return to Select. |
-| Control alignment | Use **World axes** or **Local axes** for Move and Rotate. Scale follows local axes. The **Snap** checkbox and adjacent increment menu control movement, size, and angle steps. |
-| Enter an exact transform | Set **Position**, **Rotation**, and **Size** in Properties. Rotation uses degrees. |
-| Navigate | Drag to orbit, middle-drag to pan, and scroll to zoom. Hold the right mouse button to look and use **WASD** to fly. Use **Q** and **E** to move down and up while looking. |
-| Frame a part or switch views | Press **F** or use the frame button next to **Camera view**. Choose Perspective, Top, Front, or Right. |
-| Cancel or undo | Press **Esc** during a drag. Each completed drag is one undo step. |
-| Playtest | Press **F5** or click **Playtest**. Press **Esc** or **F5** to return to the same selection and editor view. |
+| `game/` | Lua source for the apps, viewport, and original six-part block avatars. |
+| `luau/` | Project codec, scripting, multiplayer, publishing, and thumbnail rendering. |
+| `tools/` | Developer build and installer source. |
+| `Installers/` | Windows x64 Setup executables and macOS Universal app archives for this edition. |
+| `WEBSERVICE/` | Empty directory reserved for the future website. |
 
-In play, use **WASD** or the arrow keys to move, **Space** to jump, and mouse drag to look. Studio plays the working copy in its own viewport, including edits you have yet to save or publish.
+## Try the scripted world
 
-Save projects as binary `.pot` files. Use **Open** to import a first-release `.pot.json` project and **Save** to write it as `.pot`. Existing local library files from the first release are readable and are written in binary when republished.
+Install with the Windows Setup executable or extract the macOS Universal archive. Both include the runtime. Start **Terrace Park** in Client or **Terrace Workshop** in Studio. Press **E** near the gold switch to open the green gate. Step on the blue plate to light it up. Local testing needs no domain.
 
-## Runtime and replication
+In Studio, use **Q** Select, **W** Move, **E** Rotate, **R** Scale, **F** Frame, and **F5** Playtest. Use the visible axis and snap controls or enter transforms in Properties. Press **Esc** to cancel a drag or return from playtest. Use **WASD**, mouse drag, **Space**, and **E** to move, look, jump, and interact in play.
 
-Studio authors a typed place whose parts have stable IDs, shapes, transforms, and appearance. Publishing creates a validated snapshot for the world service. A session loads that snapshot into a live room, runs avatar motion and collisions at a fixed server tick, and broadcasts position snapshots. Clients send control inputs. The client predicts its own motion and interpolates other players between snapshots. Solo play and Studio playtest use the same movement rules locally. Solid geometry uses axis-aligned bounds calculated from the rotated part.
+## Pot scripting
 
-The Go runtime owns project files, endpoint selection, publishing, the session protocol, and PRS. Electron supplies native windows, file pickers, and a restricted bridge to that runtime. Saved files carry a Pot signature and format version. The bridge, HTTP world data, and session frames use MessagePack. Thumbnails use PNG.
+Select a part, then choose **Add script** or **Edit script** in Properties. Start with the Press or Touch example. **Check script** validates the source and **Apply** attaches it to the part. **Playtest** runs the working copy in the viewport. A binary `.pot` file retains scripts and part IDs. Studio opens both earlier `.pot` and first-release `.pot.json` projects.
 
-The authoring and runtime split is inspired by Roblox’s public documentation. The formats and protocol are Pot’s own. [Roblox data model](https://create.roblox.com/docs/projects/data-model) · [Roblox client-server runtime](https://create.roblox.com/docs/projects/client-server)
+```lua
+Pot.onPress(function(player)
+    Pot.pulse("self", 1, "#ffda6a")
+    Pot.setColor("self", "#09b734")
+end)
 
-Studio places transform handles and numeric fields near the model they edit. Both apps use the same focused controls, system typography, and reduced-motion settings. [Roblox part tools](https://create.roblox.com/docs/parts) · [NN/g usability heuristics](https://www.nngroup.com/articles/ten-usability-heuristics/) · [Frontend design research notes on common AI patterns](https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md)
-
-## Test multiplayer without a domain
-
-Start a shared world service.
-
-```sh
-npm run service:worlds
+Pot.onTouch(function(player: string)
+    Pot.pulse("self", 2, "#91e4ff")
+end)
 ```
 
-Run this in each Windows app terminal.
+Pot accepts a bounded Lua/Luau subset with event callbacks, typed locals, literals, arithmetic, and `if` blocks. Callbacks receive a player's session ID. Use `"self"` for the attached part or copy a target part's ID in Properties. Press requires a nearby player. Touch fires when contact begins. Scripts run in the authoritative simulation. The compiler limits scripts to the Pot API and rejects loops, imports, and unrestricted native access.
 
-```powershell
-$env:POT_API_ENDPOINT = 'http://127.0.0.1:4831'
-npm run start:client
-```
-
-On macOS, use the same endpoint.
-
-```sh
-POT_API_ENDPOINT=http://127.0.0.1:4831 npm run start:client
-```
-
-Open the same world in two clients and choose **Join online**. Use the Studio start command with the same endpoint and a publishing credential to publish to the shared service.
-
-## Host the services
-
-Set `POT_API_ENDPOINT` in the desktop process environment to connect the apps to your hosted Pot API. If the hosted catalog is unavailable at launch, Pot starts in local mode. Hosting an external website can use the same API contract. A reverse proxy can serve Pot under a URL prefix by stripping that prefix before forwarding to the service.
-
-| Process | Environment |
+| API | Purpose |
 | --- | --- |
-| Desktop | `POT_API_ENDPOINT` sets the base URL. `POT_API_READ_TOKEN` and `POT_API_WRITE_TOKEN` supply access and publishing credentials. |
-| World service | `POT_WORLD_HOST` and `POT_WORLD_PORT` default to `127.0.0.1:4831`. Set `POT_WORLD_DATA_DIR` for persistent worlds. `POT_WORLD_READ_TOKEN` restricts reads and sessions when set. `POT_WORLD_WRITE_TOKEN` enables publishing. `POT_WORLD_BROWSER_ORIGIN` allows a specific browser origin for WebSocket upgrades. |
-| World service to PRS | Set `POT_RENDER_ENDPOINT` and `POT_RENDER_TOKEN` to use separate PRS. By default the world service starts its own private renderer. |
-| Separate PRS | `POT_RENDER_HOST` and `POT_RENDER_PORT` default to `127.0.0.1:4812`. A non-loopback listener requires `POT_RENDER_TOKEN`. |
+| `Pot.setColor(part, "#rrggbb")` | Change a part's color during play. |
+| `Pot.setVisible(part, bool)`, `Pot.setSolid(part, bool)` | Control drawing and collision. Turn both off to open a door. |
+| `Pot.pulse(part, seconds, "#rrggbb")` | Animate a temporary glow. |
+| `Pot.flag(name)`, `Pot.setFlag(name, bool)` | Read or write a room-scoped flag. |
+| `Pot.isSolid(part)` | Read collision state. |
+| `Pot.after(seconds, function() … end)` | Run a delayed action. |
 
-For a Go-only deployment, build from `ANEW/native` with `go build -buildvcs=false -o potd ./cmd/potd`, then run `potd worlds` or `potd render`. Serve HTTPS and WSS through your proxy outside loopback. Keep PRS private and back up the world directory. A world service maintains its active rooms in memory.
+## Publish and manage worlds
 
-| Route | Operation |
+**Publish** writes the current place to the local library by default. **Published** lets you open a published copy, republish changes, or unpublish. Select **Worlds** in Client to refresh the catalog. The OS application data directory holds local places in `Pot/worlds`.
+
+Set `POT_API_ENDPOINT` in the desktop launch environment when hosting is ready. If the v3 catalog is unavailable at startup, the app uses the local library.
+
+| Process | Settings |
 | --- | --- |
-| `GET /healthz` | Service status. |
-| `GET /v2/worlds` | World catalog. |
-| `GET /v2/worlds/{id}` | Validated place snapshot. |
-| `PUT /v2/worlds/{id}` | Authenticated publishing. |
-| `GET /v2/worlds/{id}/thumbnail` | PNG preview. |
-| `GET /v2/session?world={id}` with WebSocket upgrade | Binary welcome, input, and server state frames. |
-| `POST /v2/render` | Generate a PNG from a binary place document. |
+| Desktop | `POT_API_ENDPOINT` sets the base URL and requires HTTPS outside loopback. `POT_API_READ_TOKEN` and `POT_API_WRITE_TOKEN` supply credentials. |
+| World service | `POT_WORLD_HOST`, `POT_WORLD_PORT`, and `POT_WORLD_DATA_DIR` set binding and persistence. Binding defaults to `127.0.0.1:4831`. `POT_WORLD_READ_TOKEN` and `POT_WORLD_WRITE_TOKEN` control access. |
+| PotRenderService | `POT_RENDER_ENDPOINT` optionally connects the world service to a separate renderer. `POT_RENDER_HOST` and `POT_RENDER_PORT` default to `127.0.0.1:4812`. `POT_RENDER_TOKEN` is required for a non-loopback binding. |
 
-Use `application/msgpack` for binary HTTP payloads. Pot 0.2 clients and services use the v2 API and should be deployed together.
+Run `lune run luau/main.luau worlds /absolute/path/to/ANEW/luau` to start a world service. Run with `render` in place of `worlds` for separate PRS. To test multiplayer on one machine, point both clients at `http://127.0.0.1:4831`. Use a TLS reverse proxy for hosting, forward the session WebSocket upgrade, cap uploads there, and keep PRS privately reachable.
 
-## Package
+| Binary v3 route | Operation |
+| --- | --- |
+| `GET /v3/worlds`, `GET /v3/worlds/{id}` | Catalog and place snapshot. |
+| `GET /v3/published`, `GET /v3/published/{id}` | Studio management with publishing credentials. |
+| `PUT /v3/worlds/{id}`, `DELETE /v3/worlds/{id}` | Publish and unpublish. |
+| `GET /v3/worlds/{id}/thumbnail` | Perspective map PNG. |
+| `GET /v3/session` via WebSocket | Binary join, input, press, and authoritative snapshots. The first frame supplies the world ID and access credential. |
+| `POST /v3/render` | Generate a map PNG from a binary place. |
+
+## Build and test
+
+Use Python 3.10 or later. The packager verifies the checksums of pinned LÖVE 11.5 and Lune 0.11.1 releases. Install NSIS 3 for Windows Setup executables. The macOS build emits a Universal archive and creates a `.pkg` when run with native macOS tools. Set `POT_MAC_APP_IDENTITY` and `POT_MAC_INSTALLER_IDENTITY` for release signing.
 
 ```sh
-npm test
-npm run package:desktop
+python tools/build.py windows
+python tools/build.py macos
+python tools/build.py dev --product studio --love /path/to/love
+lune run luau/tests.luau /absolute/path/to/ANEW/luau /path/to/empty/scratch 4851
 ```
 
-Run the packager on the target OS. Windows creates a setup program for x64 and ARM64. macOS creates DMG and ZIP packages for Apple Silicon and Intel. The packager compiles and includes the matching Go runtime in each app. Use the platform’s signing and notarization tools for public distribution.
+The third-party runtimes are included in developer packages. [LÖVE source](https://github.com/love2d/love/tree/11.5) · [Lune source and license](https://github.com/lune-org/lune/tree/v0.11.1)
