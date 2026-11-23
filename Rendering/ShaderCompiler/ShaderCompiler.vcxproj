@@ -340,13 +340,13 @@ popd
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Main|x64'">%(RootDir)%(Directory)Gen_hlslang.cpp;%(Outputs)</Outputs>
     </CustomBuild>
     <CustomBuild Include="hlsl2glslfork\hlslang\MachineIndependent\hlslang.y">
+      <!-- The bundled Bison passes these paths to m4 without quoting them. Keep them relative to the grammar directory. -->
       <Message Condition="'$(Configuration)|$(Platform)'=='Main|Win32'">Executing Bison on %(FullPath)</Message>
       <Message Condition="'$(Configuration)|$(Platform)'=='Main|x64'">Executing Bison on %(FullPath)</Message>
       <Command Condition="'$(Configuration)|$(Platform)'=='Main|Win32'">setlocal
 pushd "%(RootDir)%(Directory)" || exit /b 1
-set "BISON_SIMPLE=%(RootDir)%(Directory)..\..\tools\bison.simple"
-set "BISON_HAIRY=%(RootDir)%(Directory)..\..\tools\bison.simple"
-set "PATH=%(RootDir)%(Directory)..\..\tools\bin;%PATH%"
+set "BISON_PKGDATADIR=../../tools/share/bison"
+set "M4=../../tools/bin/m4.exe"
 "..\..\tools\bin\bison.exe" -d -t -v "%(Filename)%(Extension)" || exit /b 1
 move /Y "%(Filename).tab.c" "Gen_%(Filename)_tab.cpp" || exit /b 1
 move /Y "%(Filename).tab.h" "%(Filename)_tab.h" || exit /b 1
@@ -355,9 +355,8 @@ endlocal
 </Command>
       <Command Condition="'$(Configuration)|$(Platform)'=='Main|x64'">setlocal
 pushd "%(RootDir)%(Directory)" || exit /b 1
-set "BISON_SIMPLE=%(RootDir)%(Directory)..\..\tools\bison.simple"
-set "BISON_HAIRY=%(RootDir)%(Directory)..\..\tools\bison.simple"
-set "PATH=%(RootDir)%(Directory)..\..\tools\bin;%PATH%"
+set "BISON_PKGDATADIR=../../tools/share/bison"
+set "M4=../../tools/bin/m4.exe"
 "..\..\tools\bin\bison.exe" -d -t -v "%(Filename)%(Extension)" || exit /b 1
 move /Y "%(Filename).tab.c" "Gen_%(Filename)_tab.cpp" || exit /b 1
 move /Y "%(Filename).tab.h" "%(Filename)_tab.h" || exit /b 1
