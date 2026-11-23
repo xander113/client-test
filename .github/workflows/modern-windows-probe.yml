@@ -1,0 +1,28 @@
+name: Probe modern Windows compilation
+on:
+  push:
+    branches: [codex/modern-windows-validation]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build independent Win32 projects with v143
+        shell: pwsh
+        run: |
+          $env:CONTRIB_PATH = Join-Path $PWD Contribs
+          $locator = Join-Path ([Environment]::GetEnvironmentVariable('ProgramFiles(x86)')) 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $msbuild = & $locator -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\Current\Bin\MSBuild.exe' | Select-Object -First 1
+          if (-not $msbuild) { throw 'MSBuild was not found' }
+          $failed = @()
+          foreach ($target in @('3rd Party\zlib', '3rd Party\boost_static', 'Network', 'DSBaseClasses', 'Shaders\ShaderCompiler')) {
+            Write-Output "Building $target"
+            & $msbuild Client_2016.sln /nologo /m:2 /p:Configuration=ReleaseStudio /p:Platform=Win32 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 "/t:$target" /v:minimal
+            if ($LASTEXITCODE -ne 0) { $failed += $target }
+          }
+          if ($failed.Count) { throw "Failed targets $($failed -join ', ')" }
