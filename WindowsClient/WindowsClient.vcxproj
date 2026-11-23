@@ -314,8 +314,8 @@ call "$(SolutionDir)buildshaders.bat"</Command>
     <PublishDLLDependency Include="..\fmod\win32\fmod.dll" />
     <PublishDLLDependency Include="..\Rendering\ShaderCompiler\d3dcompiler_47.dll" />
     <PublishDLLDependency Include="..\Rendering\OpenVR\bin\win32\openvr_api.dll" />
-    <PublishDLLDependency Include="..\openssl\libeay32.dll" />
-    <PublishDLLDependency Include="..\openssl\ssleay32.dll" />
+    <PublishDLLDependency Include="..\openssl\libeay32.dll" Condition="'$(ZblocModernWindows)' != 'true'" />
+    <PublishDLLDependency Include="..\openssl\ssleay32.dll" Condition="'$(ZblocModernWindows)' != 'true'" />
     <PublishDLLDependency Include="..\VMProtect\VMProtectSDK32.dll" />
   </ItemGroup>
   <ItemGroup>

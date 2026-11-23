@@ -8,12 +8,6 @@
       <Targets>_PublishDLLDependency</Targets>
     </AvailableItemName>
   </ItemGroup>
-  <UsingTask
-    TaskName="PublishDLLDependency"
-    TaskFactory="XamlTaskFactory"
-    AssemblyName="Microsoft.Build.Tasks.v4.0">
-    <Task>$(MSBuildThisFileDirectory)$(MSBuildThisFileName).xml</Task>
-  </UsingTask>
   <Target
     Name="_PublishDLLDependency"
     BeforeTargets="$(PublishDLLDependencyBeforeTargets)"
@@ -42,11 +36,9 @@
       Condition="'@(PublishDLLDependency_tlog)' != '' and '%(PublishDLLDependency_tlog.ExcludedFromBuild)' != 'true'"
       File="$(TLogLocation)$(ProjectName).write.1.tlog"
       Lines="^%(PublishDLLDependency_tlog.Source);@(PublishDLLDependency_tlog-&gt;'%(Fullpath)')" />
-    <PublishDLLDependency
+    <Exec
       Condition="'@(PublishDLLDependency)' != '' and '%(PublishDLLDependency.ExcludedFromBuild)' != 'true'"
-      CommandLineTemplate="%(PublishDLLDependency.CommandLineTemplate)"
-      AdditionalOptions="%(PublishDLLDependency.AdditionalOptions)"
-      Inputs="%(PublishDLLDependency.Identity)" />
+      Command="%(PublishDLLDependency.CommandLineTemplate) %(PublishDLLDependency.AdditionalOptions)" />
   </Target>
   <PropertyGroup>
     <ComputeLinkInputsTargets>

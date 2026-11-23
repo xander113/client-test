@@ -19,6 +19,7 @@
 #include "v8datamodel/DebugSettings.h"
 #include "util/RobloxGoogleAnalytics.h"
 
+#include <exception>
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -386,21 +387,6 @@ bool logCurlError(void* caller, const char* curlOperation, Code curlCode, bool d
     return !curlCodeOkay(curlCode);
 }
 
-struct Data
-{
-    std::stringstream ss;
-    size_t bytes;
-
-    Data() : bytes(0) {}
-
-    void reset()
-    {
-        bytes = 0;
-        ss.str("");
-        ss.clear();
-    }
-};
-
 struct StringSink  : public boost::iostreams::sink {
     std::string& ss;
     StringSink(std::string& ss_) : ss(ss_) {}
@@ -413,12 +399,20 @@ struct StringSink  : public boost::iostreams::sink {
 
 size_t writeCurlData(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
-    size_t bytes = size * nmemb;
-    Data& writeData = *(Data *)userdata;
-    writeData.ss.write(ptr, bytes);
-    writeData.bytes += bytes;
-        
-    return bytes; // number of bytes written
+    const size_t bytes = size * nmemb;
+    if (bytes == 0)
+        return 0;
+
+    std::string& response = *static_cast<std::string*>(userdata);
+    try
+    {
+        response.append(ptr, bytes);
+    }
+    catch (const std::exception&)
+    {
+        return 0; // Report a short write through libcurl.
+    }
+    return bytes;
 }
 
 class CurlHandle
@@ -443,7 +437,7 @@ class CurlHandle
 	std::string lastUsedCsrfToken;
     bool csrfTokenChanged;
 
-    std::stringstream responseHeaders;
+    std::string responseHeaders;
     std::string responseCodeReason;
 
     bool logCurlError(const char* curlOperation, CURLcode code)
@@ -470,7 +464,7 @@ class CurlHandle
         }
     }
 
-    void setupResponseWriter(Data* responseStream)
+    void setupResponseWriter(std::string* responseStream)
     {
         logCurlError("CURLOPT_WRITEDATA", curl_easy_setopt(curl, CURLOPT_WRITEDATA, responseStream));
         logCurlError("CURLOPT_WRITEFUNCTION", curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCurlData));
@@ -647,8 +641,13 @@ public:
         // Set Accept-Encoding header to all supported encoding schemes: identity, deflate, and gzip.
         logCurlError("CURLOPT_ACCEPT_ENCODING", curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ""));
 
-        // Don't verify SSL peers.  Less secure, but means we don't have to install certificates.
-        logCurlError("CURLOPT_SSL_VERIFYPEER", curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0));
+#ifdef ZBLOC_WINDOWS_SCHANNEL
+        // Schannel verifies certificates against the Windows trust store.
+        logCurlError("CURLOPT_SSL_VERIFYPEER", curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L));
+        logCurlError("CURLOPT_SSL_VERIFYHOST", curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L));
+#else
+        logCurlError("CURLOPT_SSL_VERIFYPEER", curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L));
+#endif
 
         // Don't use signals, which will prevent problems with resolver timeouts in multi-threaded environments.
         // XXX Might need to setup SSL's mutex callback mechanism, per this URL:
@@ -714,7 +713,7 @@ public:
     {
         if (HttpCache::PolicyDefault != cachePolicy)
         {
-            responseHeaders.write(buffer, size*nitems);
+            responseHeaders.append(buffer, size*nitems);
         }
 
         // Replace CRLF with a null-terminator to make handling easier.
@@ -892,12 +891,7 @@ public:
 	{
 		if (!isPost && HttpCache::PolicyFinalRedirect == cachePolicy)
 		{
-			Data responseData;
-			setupResponseWriter(&responseData);
-		
-			responseHeaders.str("");
 			responseHeaders.clear();
-			responseData.reset();
 
 			// Check the URL against our cache of known good 200s before doing any further perform()'s.
 #ifdef _WIN32
@@ -912,12 +906,8 @@ public:
 
 			if (cacheResult.isValid())
 			{
-				responseHeaders.write(reinterpret_cast<const char*>(cacheResult.getResponseHeader().data()), cacheResult.getCacheHeader().responseHeadersSize);
-				responseData.bytes = cacheResult.getCacheHeader().responseBodySize;
-				responseData.ss.write(reinterpret_cast<const char*>(cacheResult.getResponseBody().data()), responseData.bytes);
-				std::vector<char> buffer(responseData.bytes);
-				responseData.ss.read(buffer.data(), responseData.bytes);
-				response.assign(buffer.begin(), buffer.end());
+				responseHeaders.assign(reinterpret_cast<const char*>(cacheResult.getResponseHeader().data()), cacheResult.getCacheHeader().responseHeadersSize);
+				response.assign(reinterpret_cast<const char*>(cacheResult.getResponseBody().data()), cacheResult.getCacheHeader().responseBodySize);
 				return true;
 			}
 		}
@@ -931,7 +921,7 @@ public:
 		responseCodeReason.clear();
         csrfTokenChanged = false;
 		
-        Data responseData;
+        std::string responseData;
         setupResponseWriter(&responseData);
 
         {
@@ -986,10 +976,9 @@ public:
                 ++redirects)
             {
                 cacheFailed = false;
-                responseHeaders.str("");
                 responseHeaders.clear();
                 responseCodeReason.clear();
-                responseData.reset();
+                responseData.clear();
 
                 char* tmpRedirectUrl = NULL;
                 logCurlError("CURLINFO_REDIRECT_URL", curl_easy_getinfo(curl, CURLINFO_REDIRECT_URL, &tmpRedirectUrl));
@@ -1021,17 +1010,14 @@ public:
 				}
 				else
 				{
-					responseHeaders.write(reinterpret_cast<const char*>(cacheResult.getResponseHeader().data()), cacheResult.getCacheHeader().responseHeadersSize);
-					responseData.bytes = cacheResult.getCacheHeader().responseBodySize;
-					responseData.ss.write(reinterpret_cast<const char*>(cacheResult.getResponseBody().data()), responseData.bytes);
+					responseHeaders.assign(reinterpret_cast<const char*>(cacheResult.getResponseHeader().data()), cacheResult.getCacheHeader().responseHeadersSize);
+					responseData.assign(reinterpret_cast<const char*>(cacheResult.getResponseBody().data()), cacheResult.getCacheHeader().responseBodySize);
 					responseCode = cacheResult.getCacheHeader().responseCode;
 				}
             }
         }
 
-        std::vector<char> buffer(responseData.bytes);
-        responseData.ss.read(buffer.data(), responseData.bytes);
-        response.assign(buffer.begin(), buffer.end());
+        response.swap(responseData);
 
         switch (cachePolicy)
         {
@@ -1039,10 +1025,9 @@ public:
             if (!isPost)
             {
                 // Use final URL as key to update cache.
-                const std::string strHeaders = responseHeaders.str();
                 if (cacheFailed)
                 {
-                    Cache::Data headers(strHeaders.data(), strHeaders.size());
+                    Cache::Data headers(responseHeaders.data(), responseHeaders.size());
                     Cache::Data body(response.data(), response.size());
 
 					
@@ -1065,7 +1050,7 @@ public:
 						cacheInvalidReason = std::string("Update failed: ") + e.what();
 					}
                 }
-                logCacheResultStatus(url.c_str(), redirectUrl.c_str(), cacheInvalidReason.c_str(), strHeaders, responseData.bytes, response);
+                logCacheResultStatus(url.c_str(), redirectUrl.c_str(), cacheInvalidReason.c_str(), responseHeaders, response.size(), response);
             }
             break;
         case HttpCache::PolicyDefault:

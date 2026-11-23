@@ -15,6 +15,7 @@ type vcTargetSet struct {
 	path    string
 	version string
 	msbuild string
+	toolset string
 }
 
 type visualStudioInstallation struct {
@@ -23,7 +24,7 @@ type visualStudioInstallation struct {
 	Name    string `json:"displayName"`
 }
 
-var requiredToolsets = []string{"v110", "v110_xp"}
+var legacyToolsets = []string{"v110", "v110_xp"}
 
 func visualStudioInstallations(stdout io.Writer) []visualStudioInstallation {
 	for _, variable := range []string{"ProgramFiles(x86)", "ProgramW6432", "ProgramFiles"} {
@@ -93,7 +94,7 @@ func registryTargetPath(output string) string {
 	return ""
 }
 
-func findVCTargets(installations []visualStudioInstallation, registered []vcTargetSet, stdout io.Writer) (vcTargetSet, error) {
+func findVCTargets(installations []visualStudioInstallation, registered []vcTargetSet, requested string, stdout io.Writer) (vcTargetSet, error) {
 	candidates := append(legacyVCTargets(), registered...)
 	for _, installation := range installations {
 		candidates = append(candidates, installationTargets(installation)...)
@@ -110,7 +111,7 @@ func findVCTargets(installations []visualStudioInstallation, registered []vcTarg
 	}
 
 	seen := map[string]bool{}
-	var selected vcTargetSet
+	var legacy, modern vcTargetSet
 	for _, candidate := range candidates {
 		candidate.path = filepath.Clean(candidate.path)
 		key := strings.ToLower(candidate.path)
@@ -119,27 +120,42 @@ func findVCTargets(installations []visualStudioInstallation, registered []vcTarg
 		}
 		seen[key] = true
 		var missing []string
-		for _, toolset := range requiredToolsets {
-			folder := filepath.Join(candidate.path, "Platforms", "Win32", "PlatformToolsets", toolset)
-			if !isFile(filepath.Join(folder, "Toolset.props")) || !isFile(filepath.Join(folder, "Toolset.targets")) {
+		for _, toolset := range legacyToolsets {
+			if !hasWin32Toolset(candidate.path, toolset) {
 				missing = append(missing, toolset)
 			}
 		}
-		if len(missing) != 0 {
-			fmt.Fprintf(stdout, "Visual C++ targets at %s are missing Win32 toolsets: %s\n", candidate.path, strings.Join(missing, ", "))
-			continue
+		if len(missing) == 0 && legacy.path == "" {
+			legacy = candidate
 		}
-		if selected.path == "" {
-			selected = candidate
+		for _, toolset := range []string{"v145", "v143"} {
+			if (requested == "auto" || requested == toolset) && hasWin32Toolset(candidate.path, toolset) {
+				if modern.path == "" || (modern.toolset == "v143" && toolset == "v145") {
+					modern = candidate
+					modern.toolset = toolset
+				}
+				break
+			}
+		}
+		if len(missing) != 0 {
+			fmt.Fprintf(stdout, "Visual C++ targets at %s are missing legacy Win32 toolsets: %s\n", candidate.path, strings.Join(missing, ", "))
 		}
 	}
-	if selected.path != "" {
-		return selected, nil
+	if (requested == "legacy" || requested == "auto") && legacy.path != "" {
+		return legacy, nil
+	}
+	if modern.path != "" {
+		return modern, nil
 	}
 	if len(seen) != 0 {
-		return vcTargetSet{}, errors.New("the detected Visual C++ target directories lack one or both required Win32 toolsets (v110 and v110_xp). Install or repair the Visual Studio 2012 C++ tools and Windows XP support")
+		return vcTargetSet{}, fmt.Errorf("no matching Win32 toolset is available for -toolset %s. Install the MSVC x86/x64 tools and Windows SDK through the Visual Studio Installer", requested)
 	}
-	return vcTargetSet{}, errors.New("no Visual C++ MSBuild targets (Microsoft.Cpp.Default.props) were detected. If Visual C++ 2012 is installed, run TESTEX from its x86 Native Tools Command Prompt to expose its configuration")
+	return vcTargetSet{}, errors.New("no Visual C++ MSBuild targets (Microsoft.Cpp.Default.props) were detected. Check the Desktop development with C++ workload in the Visual Studio Installer")
+}
+
+func hasWin32Toolset(targets, toolset string) bool {
+	folder := filepath.Join(targets, "Platforms", "Win32", "PlatformToolsets", toolset)
+	return isFile(filepath.Join(folder, "Toolset.props")) && isFile(filepath.Join(folder, "Toolset.targets"))
 }
 
 func legacyVCTargets() []vcTargetSet {
@@ -192,4 +208,50 @@ func hasVCTargets(path string) bool {
 		isFile(filepath.Join(path, "Microsoft.Cpp.Default.props")) &&
 		isFile(filepath.Join(path, "Microsoft.Cpp.props")) &&
 		isFile(filepath.Join(path, "Microsoft.Cpp.targets"))
+}
+
+func resolveQt(root, path string, modern bool) (string, error) {
+	if path == "" {
+		if modern {
+			return "", errors.New("Studio requires a Win32 Qt 4.8.5 SDK rebuilt with a compatible MSVC toolset. Pass its root directory with -qt or set ZBLOC_QT_ROOT. Use -component player to build Player independently")
+		}
+		path = filepath.Join(root, "Contribs", "Qt", "4.8.5", "win_VS2012")
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	for _, part := range []string{
+		"bin/moc.exe", "bin/uic.exe", "bin/rcc.exe", "include/QtCore/qglobal.h",
+		"lib/qtmain.lib", "lib/QtCore4.lib", "lib/QtGui4.lib", "lib/QtNetwork4.lib", "lib/QtXml4.lib", "lib/QtWebKit4.lib",
+		"lib/QtCore4.dll", "lib/QtGui4.dll", "lib/QtNetwork4.dll", "lib/QtXml4.dll", "lib/QtWebKit4.dll", "lib/phonon4.dll",
+		"plugins/imageformats/qjpeg4.dll", "plugins/imageformats/qgif4.dll",
+	} {
+		if !isFile(filepath.Join(path, part)) {
+			return "", fmt.Errorf("Studio's Qt SDK at %q is incomplete: missing %s", path, part)
+		}
+	}
+	return path, nil
+}
+
+func stepsFor(component string, modern bool) []buildStep {
+	var steps []buildStep
+	for _, step := range buildSteps {
+		switch step.name {
+		case "CoreScript converter", "Zbloc Player":
+			if component == "studio" {
+				continue
+			}
+		case "Studio dependencies", "Zbloc Studio":
+			if component == "player" {
+				continue
+			}
+		case "shared dependencies":
+			if modern {
+				step.targets += ";DSBaseClasses"
+			}
+		}
+		steps = append(steps, step)
+	}
+	return steps
 }

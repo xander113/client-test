@@ -2373,6 +2373,11 @@ cmd /c "exit /b 0"</Command>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
   </ItemGroup>
+  <ItemDefinitionGroup Condition="'$(ZblocModernWindows)' == 'true'">
+    <ClCompile>
+      <PreprocessorDefinitions>ZBLOC_WINDOWS_SCHANNEL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

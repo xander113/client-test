@@ -16,24 +16,6 @@
       <Targets>_Uic</Targets>
     </AvailableItemName>
   </ItemGroup>
-  <UsingTask
-    TaskName="Rcc"
-    TaskFactory="XamlTaskFactory"
-    AssemblyName="Microsoft.Build.Tasks.v4.0">
-    <Task>$(MSBuildThisFileDirectory)$(MSBuildThisFileName).xml</Task>
-  </UsingTask>
-  <UsingTask
-    TaskName="Moc"
-    TaskFactory="XamlTaskFactory"
-    AssemblyName="Microsoft.Build.Tasks.v4.0">
-    <Task>$(MSBuildThisFileDirectory)$(MSBuildThisFileName).xml</Task>
-  </UsingTask>
-  <UsingTask
-    TaskName="Uic"
-    TaskFactory="XamlTaskFactory"
-    AssemblyName="Microsoft.Build.Tasks.v4.0">
-    <Task>$(MSBuildThisFileDirectory)$(MSBuildThisFileName).xml</Task>
-  </UsingTask>
   <Target
     Name="_Rcc"
     BeforeTargets="$(RccBeforeTargets)"
@@ -62,11 +44,9 @@
       Condition="'@(Rcc_tlog)' != '' and '%(Rcc_tlog.ExcludedFromBuild)' != 'true'"
       File="$(TLogLocation)$(ProjectName).write.1.tlog"
       Lines="^%(Rcc_tlog.Source);@(Rcc_tlog-&gt;'%(Fullpath)')" />
-    <Rcc
+    <Exec
       Condition="'@(Rcc)' != '' and '%(Rcc.ExcludedFromBuild)' != 'true'"
-      CommandLineTemplate="%(Rcc.CommandLineTemplate)"
-      AdditionalOptions="%(Rcc.AdditionalOptions)"
-      Inputs="%(Rcc.Identity)" />
+      Command="%(Rcc.CommandLineTemplate) %(Rcc.AdditionalOptions)" />
   </Target>
   <PropertyGroup>
     <ComputeLinkInputsTargets>
@@ -126,11 +106,9 @@
       Condition="'@(Moc_tlog)' != '' and '%(Moc_tlog.ExcludedFromBuild)' != 'true'"
       File="$(TLogLocation)$(ProjectName).write.1.tlog"
       Lines="^%(Moc_tlog.Source);@(Moc_tlog-&gt;'%(Fullpath)')" />
-    <Moc
+    <Exec
       Condition="'@(Moc)' != '' and '%(Moc.ExcludedFromBuild)' != 'true'"
-      CommandLineTemplate="%(Moc.CommandLineTemplate)"
-      AdditionalOptions="%(Moc.AdditionalOptions)"
-      Inputs="%(Moc.Identity)" />
+      Command="%(Moc.CommandLineTemplate) %(Moc.AdditionalOptions)" />
   </Target>
   <PropertyGroup>
     <ComputeLinkInputsTargets>
@@ -190,11 +168,9 @@
       Condition="'@(Uic_tlog)' != '' and '%(Uic_tlog.ExcludedFromBuild)' != 'true'"
       File="$(TLogLocation)$(ProjectName).write.1.tlog"
       Lines="^%(Uic_tlog.Source);@(Uic_tlog-&gt;'%(Fullpath)')" />
-    <Uic
+    <Exec
       Condition="'@(Uic)' != '' and '%(Uic.ExcludedFromBuild)' != 'true'"
-      CommandLineTemplate="%(Uic.CommandLineTemplate)"
-      AdditionalOptions="%(Uic.AdditionalOptions)"
-      Inputs="%(Uic.Identity)" />
+      Command="%(Uic.CommandLineTemplate) %(Uic.AdditionalOptions)" />
   </Target>
   <PropertyGroup>
     <ComputeLinkInputsTargets>

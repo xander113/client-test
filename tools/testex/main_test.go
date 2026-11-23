@@ -70,7 +70,7 @@ func TestFindVCTargets(t *testing.T) {
 
 	t.Run("missing C++ targets", func(t *testing.T) {
 		t.Setenv("VCTargetsPath", install)
-		_, err := findVCTargets(nil, nil, io.Discard)
+		_, err := findVCTargets(nil, nil, "legacy", io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "Microsoft.Cpp.Default.props") {
 			t.Fatalf("expected an actionable error for missing Visual C++ targets, got %v", err)
 		}
@@ -82,9 +82,9 @@ func TestFindVCTargets(t *testing.T) {
 		path := filepath.Join(install, "MSBuild", "Microsoft.Cpp", "v4.0", "V110")
 		writeTargets(t, path, "v110", "v110_xp")
 		want := vcTargetSet{path: path, version: "11.0"}
-		got, err := findVCTargets(nil, nil, io.Discard)
+		got, err := findVCTargets(nil, nil, "legacy", io.Discard)
 		if err != nil || got != want {
-			t.Fatalf("findVCTargets(nil, nil, io.Discard) = (%+v, %v), want %+v", got, err, want)
+			t.Fatalf("findVCTargets = (%+v, %v), want %+v", got, err, want)
 		}
 	})
 
@@ -94,9 +94,9 @@ func TestFindVCTargets(t *testing.T) {
 		t.Setenv("VCTargetsPath", path+string(filepath.Separator))
 		t.Setenv("VisualStudioVersion", "17.0")
 		want := vcTargetSet{path: path, version: "17.0"}
-		got, err := findVCTargets(nil, nil, io.Discard)
+		got, err := findVCTargets(nil, nil, "legacy", io.Discard)
 		if err != nil || got != want {
-			t.Fatalf("findVCTargets(nil, nil, io.Discard) = (%+v, %v), want %+v", got, err, want)
+			t.Fatalf("findVCTargets = (%+v, %v), want %+v", got, err, want)
 		}
 	})
 }
@@ -129,14 +129,28 @@ func TestFindVCTargetsFromInstaller(t *testing.T) {
 	install := []visualStudioInstallation{{Path: root, Version: "17.14.3"}}
 	addToolset("v143")
 	var report bytes.Buffer
-	_, err := findVCTargets(install, nil, &report)
-	if err == nil || !strings.Contains(report.String(), "missing Win32 toolsets: v110, v110_xp") {
+	_, err := findVCTargets(install, nil, "legacy", &report)
+	if err == nil || !strings.Contains(report.String(), "missing legacy Win32 toolsets: v110, v110_xp") {
 		t.Fatalf("expected to identify the missing legacy toolsets, got %v and %q", err, &report)
+	}
+
+	modern, err := findVCTargets(install, nil, "auto", io.Discard)
+	if err != nil || modern.toolset != "v143" || modern.msbuild != msbuild {
+		t.Fatalf("did not select the available modern Win32 compiler: %+v (%v)", modern, err)
+	}
+	addToolset("v145")
+	modern, err = findVCTargets(install, nil, "auto", io.Discard)
+	if err != nil || modern.toolset != "v145" {
+		t.Fatalf("did not select the newer Win32 compiler: %+v (%v)", modern, err)
+	}
+	modern, err = findVCTargets(install, nil, "v143", io.Discard)
+	if err != nil || modern.toolset != "v143" {
+		t.Fatalf("did not honor -toolset v143: %+v (%v)", modern, err)
 	}
 
 	addToolset("v110")
 	addToolset("v110_xp")
-	targets, err := findVCTargets(install, nil, io.Discard)
+	targets, err := findVCTargets(install, nil, "legacy", io.Discard)
 	if err != nil || targets != (vcTargetSet{path: path, version: "17.0", msbuild: msbuild}) {
 		t.Fatalf("did not find the compatible custom installation: %+v (%v)", targets, err)
 	}
@@ -151,5 +165,34 @@ func TestRegistryTargetPath(t *testing.T) {
 	const expected = "D:\\Custom MSBuild\\Microsoft.Cpp\\v4.0\\V110\\"
 	if got := registryTargetPath(output); got != expected {
 		t.Fatalf("registryTargetPath = %q, want %q", got, expected)
+	}
+}
+
+func TestPlayerBuildOmitsStudioDependencies(t *testing.T) {
+	steps := stepsFor("player", true)
+	var names []string
+	for _, step := range steps {
+		names = append(names, step.name)
+	}
+	if got := strings.Join(names, ","); got != "shared dependencies,ShaderCompiler,CoreScript converter,Zbloc Player" {
+		t.Fatalf("unexpected player build steps: %s", got)
+	}
+	if !strings.Contains(steps[0].targets, ";DSBaseClasses") {
+		t.Fatal("modern build must rebuild the DirectShow base classes")
+	}
+	if strings.Contains(stepsFor("player", false)[0].targets, ";DSBaseClasses") {
+		t.Fatal("legacy build should use its existing DirectShow library")
+	}
+}
+
+func TestModernStudioRequiresAnExplicitQtSDK(t *testing.T) {
+	root := t.TempDir()
+	_, err := resolveQt(root, "", true)
+	if err == nil || !strings.Contains(err.Error(), "-qt") {
+		t.Fatalf("expected a clear missing modern Qt SDK message, got %v", err)
+	}
+	_, err = resolveQt(root, root, true)
+	if err == nil || !strings.Contains(err.Error(), "bin/moc.exe") {
+		t.Fatalf("expected an incomplete Qt SDK message, got %v", err)
 	}
 }

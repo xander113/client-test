@@ -26,7 +26,7 @@ var buildSteps = []buildStep{
 	{
 		name:          "shared dependencies",
 		configuration: "ReleaseStudio",
-		targets:       `3rd Party\boost_static;3rd Party\zlib;3rd Party\libcurl;3rd Party\SDL2;Rendering\LibOVR;qtnribbon;sgCore`,
+		targets:       `3rd Party\boost_static;3rd Party\zlib;3rd Party\libcurl;3rd Party\SDL2;Rendering\LibOVR`,
 	},
 	{
 		name:          "ShaderCompiler",
@@ -46,6 +46,11 @@ var buildSteps = []buildStep{
 		configuration: "Release",
 		targets:       "WindowsClient",
 		output:        "WindowsClient/Win32/Release/RobloxPlayerBeta.exe",
+	},
+	{
+		name:          "Studio dependencies",
+		configuration: "ReleaseStudio",
+		targets:       "qtnribbon;sgCore",
 	},
 	{
 		name:          "Zbloc Studio",
@@ -82,6 +87,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	repo := flags.String("repo", "", "Path to the source checkout (defaults to the executable directory or current directory)")
 	msbuildPath := flags.String("msbuild", "", "Explicit path to MSBuild.exe")
 	diagnose := flags.Bool("diagnose", false, "List the detected Visual Studio toolchain without building")
+	toolset := flags.String("toolset", "auto", "Windows C++ toolset (auto, v143, v145, or legacy)")
+	component := flags.String("component", "all", "Build all, player, or studio")
+	qt := flags.String("qt", os.Getenv("ZBLOC_QT_ROOT"), "Path to compatible 32-bit Qt 4.8.5 tools, libraries and DLLs")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "TESTEX.exe builds Zbloc Player and Zbloc Studio for Win32.")
 		flags.PrintDefaults()
@@ -92,8 +100,18 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " "))
 	}
+	switch *toolset {
+	case "auto", "v143", "v145", "legacy":
+	default:
+		return fmt.Errorf("unknown toolset %q", *toolset)
+	}
+	switch *component {
+	case "all", "player", "studio":
+	default:
+		return fmt.Errorf("unknown component %q", *component)
+	}
 	if runtime.GOOS != "windows" {
-		return errors.New("building Player and Studio requires Windows and the Visual Studio 2012 C++ toolchain")
+		return errors.New("building Player and Studio requires Windows and the Visual Studio C++ tools")
 	}
 
 	var root string
@@ -106,7 +124,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, "Checkout:", root)
 	}
 	installations := visualStudioInstallations(stdout)
-	vcTargets, err := findVCTargets(installations, registeredVCTargets(), stdout)
+	vcTargets, err := findVCTargets(installations, registeredVCTargets(), *toolset, stdout)
 	if err != nil {
 		return err
 	}
@@ -116,11 +134,33 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintln(stdout, "MSBuild:", msbuild)
 	fmt.Fprintln(stdout, "Visual C++ targets:", vcTargets.path)
+	if vcTargets.toolset != "" {
+		fmt.Fprintln(stdout, "Win32 toolset:", vcTargets.toolset)
+	} else {
+		fmt.Fprintln(stdout, "Win32 toolsets: v110, v110_xp")
+	}
 	if *diagnose {
 		return nil
 	}
-	if err := build(root, msbuild, vcTargets, stdout, stderr); err != nil {
-		return err
+	var qtDir string
+	var studioErr error
+	buildComponent := *component
+	if buildComponent != "player" {
+		qtDir, studioErr = resolveQt(root, *qt, vcTargets.toolset != "")
+		if studioErr == nil {
+			fmt.Fprintln(stdout, "Studio Qt SDK:", qtDir)
+		} else if buildComponent == "studio" {
+			return studioErr
+		} else {
+			fmt.Fprintln(stderr, "Studio prerequisites:", studioErr)
+			buildComponent = "player"
+		}
+	}
+	if err := build(root, msbuild, vcTargets, qtDir, buildComponent, stdout, stderr); err != nil {
+		return errors.Join(err, studioErr)
+	}
+	if studioErr != nil {
+		return studioErr
 	}
 	fmt.Fprintln(stdout, "\nBuild complete.")
 	return nil
@@ -173,13 +213,21 @@ func findMSBuild(path string, targets vcTargetSet) (string, error) {
 	return "", errors.New("MSBuild.exe is unavailable; use a Visual Studio Developer Command Prompt or pass -msbuild")
 }
 
-func build(root, msbuild string, vcTargets vcTargetSet, stdout, stderr io.Writer) error {
+func build(root, msbuild string, vcTargets vcTargetSet, qtDir, component string, stdout, stderr io.Writer) error {
 	contrib := filepath.Join(root, "Contribs")
-	for _, step := range buildSteps {
+	for _, step := range stepsFor(component, vcTargets.toolset != "") {
 		fmt.Fprintf(stdout, "\nBuilding %s (%s|Win32)\n", step.name, step.configuration)
 		args := []string{solution, "/nologo", "/m:1", "/nodeReuse:false",
 			"/p:Configuration=" + step.configuration, "/p:Platform=Win32", "/t:" + step.targets,
 			"/p:VCTargetsPath=" + vcTargets.path + string(filepath.Separator)}
+		if vcTargets.toolset != "" {
+			args = append(args, "/p:PlatformToolset="+vcTargets.toolset,
+				"/p:WindowsTargetPlatformVersion=10.0", "/p:ZblocModernWindows=true",
+				"/p:ForceImportBeforeCppTargets="+filepath.Join(root, "tools", "testex", "ModernCpp.targets"))
+		}
+		if qtDir != "" {
+			args = append(args, "/p:ZblocQtDir="+qtDir)
+		}
 		if vcTargets.version != "" {
 			args = append(args, "/p:VisualStudioVersion="+vcTargets.version)
 		}

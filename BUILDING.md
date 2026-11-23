@@ -1,29 +1,55 @@
 # Build Zbloc for development with TESTEX.exe
 
-Run `TESTEX.exe` on 64-bit Windows. A Visual Studio 2012 Developer Command
-Prompt can provide the toolchain for a custom installation.
-Install Visual Studio 2012 Update 5 with the C++ and MFC tools, and prepare the
-repository's Win32 Qt 4.8.5, Boost 1.56, and OpenSSL dependencies using
-[BUILDING_CONTRIBS.md](BUILDING_CONTRIBS.md). Use a short checkout path without
-spaces for the legacy project files. The builder sets `CONTRIB_PATH` to the
-checkout's `Contribs` directory for MSBuild.
+## Current Visual Studio
 
-```bat
-TESTEX.exe
+The modern Windows build path uses the Win32 target with Visual Studio 2022
+(v143) or Visual Studio 2026 (v145) and a Windows 10 or 11 SDK. Install
+Desktop development with C++, including the x86/x64 C++ tools and MFC. The
+modern build path is being validated on Windows.
+
+From the root of the full checkout, inspect the installed toolchains and run
+the Player build independently:
+
+```powershell
+.\TESTEX.exe -diagnose -toolset v145
+.\TESTEX.exe -toolset v145 -component player
 ```
 
-Download or clone the full repository before running the builder. The builder
-finds the checkout beside the executable or in the current directory.
-When double-clicked, TESTEX keeps its console open until you press Enter.
-It prints the location of its build log in your Windows temporary directory.
-TESTEX checks registered Visual Studio installations for the Win32
-`v110` and `v110_xp` toolsets before building. Run `TESTEX.exe -diagnose`
-to see which installations and toolsets it finds without starting the build.
-Both toolsets come from the Visual Studio 2012 C++ tools and Windows XP
-targeting support. If a custom legacy installation is already present, try its
-x86 Native Tools Command Prompt.
-Use `-repo "C:\src\CLIENT-MASTER"` for a separate checkout location and
+Use `-toolset v143` for the Visual Studio 2022 compiler. Automatic detection
+selects a current compiler when the legacy toolset is unavailable.
+
+Studio also requires a Win32 Qt 4.8.5 SDK with QtWebKit, Qt tools, and image
+plugins rebuilt with a compatible MSVC toolset. Supply the SDK root with
+`-qt` or `ZBLOC_QT_ROOT`. A build of both applications with one command looks
+like this:
+
+```powershell
+.\TESTEX.exe -toolset v145 -qt "C:\SDKs\Qt-4.8.5-win32"
+```
+
+On the modern path, libcurl uses Schannel and the Windows trust store for
+HTTPS. Build and test the service with a certificate the Windows test
+machine trusts. Player, Studio, and the future website still require a
+compatible game backend.
+
+## Visual Studio 2012
+
+For the legacy path, use Visual Studio 2012 Update 5 with Visual C++, MFC,
+and XP targeting support, and prepare the Win32 Qt, Boost, and OpenSSL
+dependencies in [BUILDING_CONTRIBS.md](BUILDING_CONTRIBS.md).
+
+```bat
+TESTEX.exe -toolset legacy
+```
+
+## Running the builder
+
+The builder finds the checkout beside the executable or in the current
+directory. Prefer a short checkout path for the legacy project files.
+Use `-repo "C:\src\client-test"` for a separate checkout location and
 `-msbuild "C:\path\to\MSBuild.exe"` to select MSBuild explicitly.
+It sets `CONTRIB_PATH` to the checkout's `Contribs` directory, reports the
+location of its build log, and keeps the console open after a double-click.
 
 It builds the shared projects, generates CoreScripts, and builds these Win32
 applications in their normal output directories.

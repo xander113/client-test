@@ -59,7 +59,8 @@
       <AdditionalIncludeDirectories>.;$(CONTRIB_PATH)\SDK\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>NDEBUG;WIN32;_LIB;_WIN32_DCOM;WINVER=0x400;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
-      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <RuntimeLibrary Condition="'$(ZblocModernWindows)' != 'true'">MultiThreaded</RuntimeLibrary>
+      <RuntimeLibrary Condition="'$(ZblocModernWindows)' == 'true'">MultiThreadedDLL</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>streams.h</PrecompiledHeaderFile>
