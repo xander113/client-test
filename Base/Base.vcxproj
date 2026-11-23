@@ -127,7 +127,7 @@
     <ClCompile Include="util\RegistryUtil.cpp" />
     <ClCompile Include="rbx\boost.cpp" />
     <ClCompile Include="rbx\CEvent.cpp" />
-    <ClCompile Include="rbx\Crypt.cpp" />
+    <ClCompile Include="rbx\Win\Crypt.cpp" />
     <ClCompile Include="rbx\Memory.cpp" />
     <ClCompile Include="rbx\ProcessPerfCounter.cpp" />
     <ClCompile Include="include\rbx\RbxDbgInfo.cpp" />

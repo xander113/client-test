@@ -14,6 +14,8 @@ namespace RBX
 #if defined (_WIN32) && !defined(RBX_PLATFORM_DURANGO)
 	HCRYPTPROV context;
 	HCRYPTKEY key;
+	Crypt(const Crypt&);
+	Crypt& operator=(const Crypt&);
 #endif
 	public:
 		Crypt();

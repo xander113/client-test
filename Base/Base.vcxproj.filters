@@ -78,7 +78,7 @@
     <ClCompile Include="rbx\CEvent.cpp">
       <Filter>Source Files\RBX</Filter>
     </ClCompile>
-    <ClCompile Include="rbx\Crypt.cpp">
+    <ClCompile Include="rbx\Win\Crypt.cpp">
       <Filter>Source Files\RBX</Filter>
     </ClCompile>
     <ClCompile Include="rbx\Memory.cpp">
