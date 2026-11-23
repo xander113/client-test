@@ -1,0 +1,169 @@
+## Ignore Visual Studio temporary files, build results and unwanted files/folders.
+## The Ignore List is also categorized!
+## Written by yungDoom with <3
+
+## VISUAL STUDIO ##
+
+# Visual Studio cache/options directory
+.vs/
+
+# Build results
+[Oo]bj/
+
+# Upgrade
+[Bb]ackup*/
+UpgradeLog*.htm
+
+
+# Files built by Visual Studio
+*.obj
+*.pdb
+*.log
+*.ilk
+*.exp
+
+## END OF VISUAL STUDIO ##
+
+## GENERAL ##
+
+/App/tmp.h
+/App/AlreadyBuiltRandomConstant.h
+
+## Personal Files & Folders
+/Client_2016_Dev.sln
+/Extras/
+/Tools/
+
+# Ignore precompiled shaders
+/shaders/shaders_*.pack
+
+# Ignore boost builds
+/Contribs/boost_1_56_0/bjam.exe
+/Contribs/boost_1_56_0/b2.exe
+/Contribs/boost_1_56_0/bin.v2/
+/Contribs/boost_1_56_0/tools/build/src/engine/bin.ntx86/b2.exe
+/Contribs/boost_1_56_0/tools/build/src/engine/bin.ntx86/bjam.exe
+/Contribs/boost_1_56_0/tools/build/src/engine/bootstrap/jam0.exe
+/Contribs/boost_1_56_0/tools/build/src/engine/bootstrap/jam0.ilk
+/Contribs/boost_1_56_0/project-config.jam
+/Contribs/boost_1_56_0/stage/lib/
+
+# Ignore Qt builds
+/Contribs/Qt/4.8.5/win_VS2012/bin
+/Contribs/Qt/4.8.5/win_VS2012/plugins
+/Contribs/Qt/4.8.5/win_VS2012/lib
+/Contribs/Qt/4.8.5/win_VS2012/bin/*
+/Contribs/Qt/4.8.5/win_VS2012/lib/*
+/Contribs/Qt/4.8.5/win_VS2012/demos
+/Contribs/Qt/4.8.5/win_VS2012/projects.sln
+/Contribs/Qt/4.8.5/win_VS2012/imports/QtWebKit/*.dll
+/Contribs/Qt/4.8.5/win_VS2012/imports/Qt/labs/shaders/*.dll
+/Contribs/Qt/4.8.5/win_VS2012/imports/Qt/labs/particles/*.dll
+/Contribs/Qt/4.8.5/win_VS2012/imports/Qt/labs/gestures/*.dll
+/Contribs/Qt/4.8.5/win_VS2012/imports/Qt/labs/folderlistmodel/*.dll
+/Contribs/Qt/4.8.5/win_VS2012/imports/QtWebKit/*.lib
+/Contribs/Qt/4.8.5/win_VS2012/imports/Qt/labs/shaders/*.lib
+/Contribs/Qt/4.8.5/win_VS2012/imports/Qt/labs/particles/*.lib
+/Contribs/Qt/4.8.5/win_VS2012/imports/Qt/labs/gestures/*.lib
+/Contribs/Qt/4.8.5/win_VS2012/imports/Qt/labs/folderlistmodel/*.lib
+/Contribs/Qt/4.8.5/win_VS2012/src/3rdparty/webkit/Source/WebCore/release/
+/Contribs/Qt/4.8.5/win_VS2012/src/3rdparty/webkit/Source/WebCore/debug/
+/Contribs/Qt/4.8.5/win_VS2012/src/3rdparty/webkit/Source/JavaScriptCore/release/
+/Contribs/Qt/4.8.5/win_VS2012/src/3rdparty/webkit/Source/JavaScriptCore/debug/
+/Contribs/Qt/4.8.5/win_VS2012/src/tools/bootstrap/release/
+*.moc
+moc_*.*
+qrc_*.*
+/Contribs/Qt/4.8.5/win_VS2012/src/script/tmp/moc/*/
+
+
+## Ignore SDL2 builds
+/Contribs/SDL2/VisualC/SDL/Win32/
+/SDL2/Win/2.0.4/
+
+## Ignore zlib builds
+/zlib/win/bin/
+
+# Ignore OpenSSL configure & build cache/output
+/Contribs/openssl/crypto/buildinf.h
+/Contribs/openssl/d32.mak
+/Contribs/openssl/32.mak
+/Contribs/openssl/d32dll.mak
+/Contribs/openssl/32dll.mak
+/Contribs/openssl/inc32/
+/Contribs/openssl/out32*/
+/Contribs/openssl/tmp32*/
+/openssl
+
+## Ignore curl builds
+/Contribs/windows/x86/curl/curl-7.43.0/build/
+
+## Ignore DSBaseClasses builds
+/Contribs/DSBaseClasses/Sources/Debug
+/Contribs/DSBaseClasses/Sources/Release
+
+# Custom ignore files and folders
+/App/bin/
+/Network/bin/
+/boostlibs/bin/
+/Base/bin/
+/Log/bin/
+/QTitanRibbon/roblox_build/
+/Installer/Bootstrapper/bin/Release
+/Installer/BootstrapperClient/bin/Release
+/Installer/BootstrapperQTStudio/bin/Release
+/Installer/BootstrapperRccService/bin/Release
+/Installer/Bootstrapper/bin/Debug
+/Installer/BootstrapperClient/bin/Debug
+/Installer/BootstrapperQTStudio/bin/Debug
+/Installer/BootstrapperRccService/bin/Debug
+/Installer/RobloxProxy/bin/Release
+/Installer/RobloxProxy/RobloxProxy_i.c
+/Installer/RobloxProxy/RobloxProxy_i.h
+/Installer/RobloxProxy/RobloxProxy_p.c
+/RobloxStudio/bin/
+/Rendering/LibOVR/Lib/Windows/
+/CoreScriptConverter2/tool/win32/*.exe
+/CoreScriptConverter2/tool/win32/*.lib
+/CoreScriptConverter2/tool/win32/*.dll
+/Rendering/ShaderCompiler/Main
+/Rendering/ShaderCompiler/x64/Main/*.command.1.tlog
+/Rendering/ShaderCompiler/x64/Main/*.read.1.tlog
+/Rendering/ShaderCompiler/x64/Main/*.write.1.tlog
+/Rendering/ShaderCompiler/hlsl2glslfork/hlslang/MachineIndependent/gen_hlslang.cpp
+/Rendering/ShaderCompiler/hlsl2glslfork/hlslang/MachineIndependent/Gen_hlslang_tab.cpp
+/Rendering/ShaderCompiler/ShaderCompiler*.exe
+/Contribs/SDL2/VisualC/Win32/Release/SDL2.lib
+/CSG/bin/Release/
+/CSG/sgCore_build/ms/Release/
+/QTitanRibbon/src/shared/ribbon/release/
+/Rendering/AppDraw/bin/Release/
+/RCCService/Win32/Release/
+/RCCService/gSOAP/gsoap-2.7/gsoap/VisualStudio2005/wsdl2h/wsdl2h/Release/
+/RCCService/gSOAP/gsoap-2.7/gsoap/VisualStudio2005/soapcpp2/soapcpp2/Release/
+/Rendering/GfxCore/bin/Release/
+/WindowsClient/Win32/Release/
+/Rendering/GfxBase/bin/Release/
+/Rendering/g3d/bin/graphics3D/Release/
+/Rendering/GfxRender/bin/Release/
+/Rendering/RbxG3D/bin/Release/
+/App.BulletPhysics/Release/
+/rbxsigner/INIFileParser/bin/
+/rbxsigner/KeyGenerator/bin/
+/rbxsigner/Signer/bin/
+/Roblox.RccServiceArbiter/bin/Release
+/Client.LegacyAssemblies/Roblox.Configuration/bin/Release
+/Client.LegacyAssemblies/Roblox.Common/bin/Release
+/Client.LegacyAssemblies/Grid/Arbiter/Roblox.Grid.Arbiter.Common/bin/Release
+/Client.LegacyAssemblies/Grid/Roblox.Grid.Client/bin/Release
+/Client.LegacyAssemblies/Grid/Roblox.Grid.Common/bin/Release
+/RobloxStudio/ui_*.h
+wsdl2h.exe
+soapcpp2.exe
+hlslang_tab.h
+
+## END OF GENERAL ##
+/Base/rbx/Crypt.cpp
+
+# Local macOS development build products
+/build/zbloc-mac/
