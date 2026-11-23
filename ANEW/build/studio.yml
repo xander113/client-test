@@ -1,0 +1,12 @@
+extends: ./build/base.yml
+appId: org.potproject.studio
+productName: Pot Studio
+extraMetadata:
+  potProduct: studio
+directories:
+  output: artifacts/studio
+win:
+  icon: build/icons/studio.png
+mac:
+  icon: build/icons/studio.png
+  category: public.app-category.developer-tools

@@ -1,0 +1,21 @@
+asar: true
+artifactName: "${productName}-${version}-${arch}.${ext}"
+files:
+  - dist/**/*
+  - desktop/**/*
+  - services/**/*
+  - shared/**/*
+  - build/icons/*.png
+  - package.json
+win:
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+nsis:
+  artifactName: "${productName}-${version}-Setup.${ext}"
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
