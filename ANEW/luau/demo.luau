@@ -12,6 +12,13 @@ function Demo.load(root,id)
         part("garden-switch","Garden switch",{2.6,.35,11},{1,.7,1},"#efb64c")
         part("garden-gate","Garden gate",{0,1.05,8.15},{3.5,2.1,.3},"#3c9564")
         part("welcome-plate","Welcome plate",{-2.8,.07,10.1},{2.3,.14,2.1},"#497eac")
+        for _,object in ipairs(p.objects) do
+            if object.id:match("^walkway%-") then
+                object.textures=Wire.array({{asset="pot-stone",face=3,mode="tile",tileU=2,tileV=2}})
+            elseif object.id:match("^pavilion%-") then
+                object.textures=Wire.array({{asset="pot-wood",face=0,mode="tile",tileU=3,tileV=3}})
+            end
+        end
         p.objects[#p.objects+1]={id="terrace-entry",name="Terrace entry",kind="spawn",position={0,-.06,12},
             size={2.4,.12,2.4},rotation={0,0,0},color="#88bca1",solid=false,enabled=true}
         p.defaultSpawn="terrace-entry"

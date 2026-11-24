@@ -5,6 +5,7 @@ local Place=require("./place")
 local Room=require("./room")
 local Store=require("./store")
 local Thumbnail=require("./thumbnail")
+local Accounts=require("./accounts")
 local Network={}
 
 local function endpoint(raw)
@@ -73,7 +74,7 @@ local function request(url,verb,token,data,media,max)
     return Wire.decode(res.body,max)
 end
 
-function Network.remote(url,read,write)
+function Network.remote(url,read,write,account)
     local base=endpoint(url)
     local function action(verb,path,key,body,media)
         return request(base..path,verb,key,body,media or Wire.mime,media and 1024*1024 or Place.limit)
@@ -120,7 +121,7 @@ function Network.remote(url,read,write)
             check(id)
             local ws=Network.within(6,function() return net.socket(base:gsub("^http","ws").."/v3/session") end)
             local ok,welcome=pcall(function()
-                ws:send(Wire.encode({type="join",world=id,credential=read or ""}),true)
+                ws:send(Wire.encode({type="join",world=id,credential=read or "",account=account}),true)
                 local e=Wire.decode(Network.within(6,function() return ws:next() end),2048)
                 assert(e.type=="welcome" and Place.id(e.id) and (e.allowReset==nil or type(e.allowReset)=="boolean"),
                     "The server did not start a Pot session.")
@@ -176,6 +177,7 @@ end
 
 function Network.serve(store,options)
     local rooms,users={},0
+    local accounts=if options.accountDir or options.accountAdmin then Accounts.new(options.accountDir) else nil
     local preview=Network.previewer(options.renderURL,options.renderToken)
     local function reader(key) return not options.read or options.read=="" or equal(key,options.read) or equal(key,options.write) end
     local function writer(key) return equal(key,options.write) end
@@ -184,9 +186,42 @@ function Network.serve(store,options)
         rooms[id]=nil
         if r then for socket in pairs(r.peers) do task.defer(close,socket,1012) end end
     end
+    local function accountRoute(req,key)
+        if not accounts then return fail(404,"Accounts are unavailable on this service.") end
+        local method,path=req.method,req.path
+        local operation
+        if method=="GET" and path=="/v3/account/me" then
+            local id=accounts.identify(key)
+            if not id then return fail(401,"Account access is required.") end
+            operation=function()return accounts.get(id)end
+        elseif method=="PUT" and path=="/v3/account/me/look" then
+            local id=accounts.identify(key)
+            if not id then return fail(401,"Account access is required.") end
+            operation=function()return accounts.setLook(id,Wire.decode(req.body,4096))end
+        else
+            local id=path:match("^/v3/accounts/([a-z0-9%-]+)$")
+            local balance=path:match("^/v3/accounts/([a-z0-9%-]+)/currency$")
+            if not equal(key,options.accountAdmin) then return fail(401,"Account administration is required.") end
+            if id and method=="GET" then operation=function()return accounts.get(id)end
+            elseif id and method=="PUT" then operation=function()return accounts.provision(id,Wire.decode(req.body,4096))end
+            elseif balance and method=="POST" then
+                operation=function()
+                    local entry=Wire.decode(req.body,4096)
+                    if type(entry)~="table" then return accounts.adjust(balance,nil,nil) end
+                    return accounts.adjust(balance,entry.operation,entry.delta)
+                end
+            else return fail(404,"Unknown account route.") end
+        end
+        if method~="GET" and #req.body>4096 then return fail(413,"Account request is too large.") end
+        local ok,value=pcall(operation)
+        if ok then return reply(200,value) end
+        if type(value)=="table" and type(value.status)=="number" then return fail(value.status,value.message) end
+        return fail(400,"The account request could not be completed.")
+    end
     local function handle(req)
         local method,path,key=req.method,req.path,credential(req)
         if method=="GET" and path=="/healthz" then return reply(200,{service="Pot Worlds",status="ok"}) end
+        if path:match("^/v3/accounts?/") then return accountRoute(req,key) end
         if method=="GET" and path=="/v3/worlds" then
             return if reader(key) then reply(200,store.list()) else fail(401,"Access denied.")
         end
@@ -237,6 +272,12 @@ function Network.serve(store,options)
             local raw=Network.within(5,function() return socket:next() end)
             local hello=Wire.decode(raw,2048)
             assert(type(hello)=="table" and hello.type=="join" and Place.id(hello.world) and reader(hello.credential))
+            local avatar
+            if hello.account~=nil then
+                local accountID=accounts and accounts.identify(hello.account)
+                assert(accountID,"Invalid Pot account credential.")
+                avatar=accounts.avatar(accountID)
+            end
             id=hello.world
             local place=assert(store.load(id))
             local revision=Store.revision(place)
@@ -244,7 +285,7 @@ function Network.serve(store,options)
             if r and r.revision~=revision then reload(id); r=nil end
             if not r then r={sim=Room.create(place),peers={},n=0,revision=revision}; rooms[id]=r end
             assert(r.n<24)
-            p=Room.add(r.sim)
+            p=Room.add(r.sim,avatar)
             r.n+=1
             socket:send(Wire.encode({type="welcome",id=p.id,allowReset=r.sim.allowReset}),true)
             r.peers[socket]={busy=false}

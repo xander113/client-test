@@ -2,6 +2,8 @@ local UI=require("ui")
 local View=require("view")
 local Wire=require("wire")
 local Hierarchy=require("hierarchy")
+local Physics=require("physics")
+local Surface=require("surface")
 local G=love.graphics
 local Studio={}
 Studio.__index=Studio
@@ -34,7 +36,8 @@ end
 local function clamp(a,b,c) return math.max(b,math.min(c,a)) end
 local function copy(v) return Wire.decode(Wire.encode(v)) end
 local function blank()
-    return {schemaVersion=4,id="world-"..id(),name="Untitled world",description="",spawn={x=0,y=0,z=5},allowReset=true,
+    return {schemaVersion=5,id="world-"..id(),name="Untitled world",description="",spawn={x=0,y=0,z=5},allowReset=true,
+        textures=Wire.array(),movement={walkSpeed=Physics.walkSpeed,jumpHeight=Physics.jumpHeight},
         objects=Wire.array({{id="ground",name="Ground",kind="box",position={0,-.5,0},rotation={0,0,0},size={34,1,34},
             color="#91bfa0",solid=true}}),scripts=Wire.array()}
 end
@@ -538,6 +541,10 @@ function Studio:inspector(x,y,w,h,locked)
             if first then self:select(first.id);self:scriptEditor(first) else self:addScript("script",o.id) end
         end,{outline=true})
         ui:button("Copy part ID",x+125,row,103,28,function() love.system.setClipboardText(o.id); self.status="Part ID copied." end,{outline=true})
+        row=row+34
+        ui:button("Textures…",x+9,row,110,27,function()self.modal=Surface.new(o,self.scene,id)end,{outline=true})
+        local assigned=#(o.textures or {})
+        if assigned>0 then ui:text(assigned==1 and "1 texture layer" or (assigned.." texture layers"),x+125,row+7,C.muted,ui.small) end
     else
         local allowed=self.scene.allowReset
         ui:text("Character reset",x+9,row,C.muted,ui.small)
@@ -548,6 +555,17 @@ function Studio:inspector(x,y,w,h,locked)
         row=row+62
         local preferred=self.nodes[self.scene.defaultSpawn]
         ui:text(preferred and ("Default spawn   "..preferred.name) or "Spawn selection   Automatic",x+9,row,C.muted,ui.small,w-18)
+        row=row+32
+        local movement=self.scene.movement
+        local cell=(w-30)/2
+        self:property("WalkSpeed",tostring(movement.walkSpeed),x+9,row,cell,function(value)
+            local speed=tonumber(value)
+            if speed and speed==speed then movement.walkSpeed=clamp(speed,0,Physics.maxSpeed);self:checkpoint() end
+        end)
+        self:property("JumpHeight",tostring(movement.jumpHeight),x+21+cell,row,cell,function(value)
+            local jump=tonumber(value)
+            if jump and jump==jump then movement.jumpHeight=clamp(jump,0,Physics.maxJump);self:checkpoint() end
+        end)
     end
 end
 
@@ -631,7 +649,9 @@ end
 function Studio:drawModal()
     local ui,m=self.ui,self.modal
     local W,H=G.getDimensions()
-    if m.kind=="script" then
+    if m.kind=="texture" then m:draw(self)
+    elseif m.kind=="textureRemove" then Surface.removeDialog(self,m)
+    elseif m.kind=="script" then
         local w,h=math.min(W-38,760),math.min(H-32,590)
         local x,y=ui:modal("Edit "..scriptNames[m.node.kind].." · "..m.node.name,w,h)
         ui:text("Lua / Luau",x+17,y+42,C.muted,ui.small)
@@ -791,7 +811,16 @@ function Studio:wheelmoved(dx,dy)
     elseif y>=117 and y<self.explorerBottom then self.scroll=math.max(0,self.scroll-dy*3) end
 end
 function Studio:textinput(value) self.ui:insert(value) end
-function Studio:filedropped(file) self:open(file:getFilename()) end
+function Studio:filedropped(file)
+    local path=file:getFilename()
+    if path:lower():match("%.png$") then
+        if self.pending or self.view.playing then return end
+        local part=self:part()
+        if not part then self.status="Select a part before dropping a texture.";return end
+        if not self.modal then self.modal=Surface.new(part,self.scene,id) end
+        if self.modal.kind=="texture" then self.modal:import(self,path) end
+    else self:open(path) end
+end
 function Studio:focus(held)
     if not held then self.dragNode=nil; self.view:cancel() end
 end
@@ -804,7 +833,13 @@ function Studio:keypressed(key,_,repeatKey)
         return
     end
     if self.ui:key(key) or repeatKey then return end
-    if self.modal then if key=="escape" then self.modal=nil end;return end
+    if self.modal then
+        if key=="escape" then
+            if self.modal.kind=="texture" or self.modal.kind=="textureRemove" then self:refresh() end
+            self.modal=nil
+        end
+        return
+    end
     if key=="escape" and self.dragNode then self.dragNode=nil;return end
     if key=="escape" and self.view:cancel() then return end
     if key=="f5" or (self.view.playing and key=="escape") then self:play();return end

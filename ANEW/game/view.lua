@@ -1,5 +1,6 @@
 local G=love.graphics
 local Mesh=require("geometry")
+local Texture=require("texture")
 local View={}
 View.__index=View
 local pi=math.pi
@@ -8,6 +9,7 @@ local clamp=function(v,a,b)return math.min(b,math.max(a,v))end
 local len=function(a,b)return math.sqrt(a*a+b*b)end
 local boxEdges={{1,2},{1,3},{1,5},{2,4},{2,6},{3,4},{3,7},{4,8},{5,6},{5,7},{6,8},{7,8}}
 local axisNames={"X","Y","Z"}
+local noLayers={}
 local function add(a,b,scale) return {a[1]+b[1]*scale,a[2]+b[2]*scale,a[3]+b[3]*scale} end
 local function sub(a,b)return{a[1]-b[1],a[2]-b[2],a[3]-b[3]}end
 local function plain(v)return unpack(v)end
@@ -49,12 +51,16 @@ uniform vec3 dimensions;
 attribute vec3 VertexNormal;
 varying vec3 surfaceNormal;
 varying float distanceFromCamera;
+varying vec3 modelPosition;
+varying vec3 modelNormal;
 
 vec4 position(mat4 matrix, vec4 position) {
     vec3 p = position.xyz * dimensions;
     vec3 location = offset + axisU*p.x + axisV*p.y + axisW*p.z - eye;
     vec3 n = VertexNormal / dimensions;
     surfaceNormal = axisU*n.x + axisV*n.y + axisW*n.z;
+    modelNormal = VertexNormal;
+    modelPosition = position.xyz;
     float z = dot(location, eyeForward);
     distanceFromCamera = z;
     return vec4(dot(location,eyeRight)*lens.x, -dot(location,eyeUp)*lens.y, z*1.0005-.18, z);
@@ -63,11 +69,43 @@ vec4 position(mat4 matrix, vec4 position) {
 local pixelShader=[[
 varying vec3 surfaceNormal;
 varying float distanceFromCamera;
+varying vec3 modelPosition;
+varying vec3 modelNormal;
 uniform float shine;
+uniform vec3 dimensions;
+uniform Image partTexture;
+uniform vec4 textureLayer;
 vec4 effect(vec4 color, Image sampleImage, vec2 uv, vec2 screen) {
     vec3 n=normalize(surfaceNormal);
     float l=0.64+0.40*max(0.0,dot(n,normalize(vec3(-.42,.86,.55))));
-    vec3 lit=mix(color.rgb*l, min(color.rgb*1.28+vec3(.1),vec3(1)),shine);
+    vec3 base=color.rgb;
+    if (textureLayer.x>=0.0) {
+        vec3 a=abs(modelNormal);
+        vec3 p=modelPosition;
+        vec2 st;
+        vec2 span;
+        float face;
+        if (a.x>=a.y && a.x>=a.z) {
+            face=modelNormal.x>=0.0 ? 1.0 : 2.0;
+            st=vec2(face==1.0 ? -p.z : p.z,-p.y);
+            span=dimensions.zy;
+        } else if (a.y>=a.z) {
+            face=modelNormal.y>=0.0 ? 3.0 : 4.0;
+            st=vec2(p.x,face==3.0 ? p.z : -p.z);
+            span=dimensions.xz;
+        } else {
+            face=modelNormal.z>=0.0 ? 5.0 : 6.0;
+            st=vec2(face==5.0 ? -p.x : p.x,-p.y);
+            span=dimensions.xy;
+        }
+        if (textureLayer.x>0.0 && face!=textureLayer.x) discard;
+        st+=vec2(.5);
+        if (textureLayer.w>0.0) st=st*span/textureLayer.yz;
+        else st=clamp(st,vec2(.001),vec2(.999));
+        vec4 tex=Texel(partTexture,st);
+        base=mix(base,tex.rgb,tex.a);
+    }
+    vec3 lit=mix(base*l, min(base*1.28+vec3(.1),vec3(1)),shine);
     return vec4(mix(lit,vec3(.84,.92,.97),clamp((distanceFromCamera-45.0)/360.0,0.0,.7)),1.0);
 }
 ]]
@@ -90,14 +128,36 @@ function View.new(change,select,press)
     return setmetatable({shader=shader,models=models,objects={},parts={},actors={},effects={},
         yaw=.72,pitch=.48,distance=45,target={0,0,0},goal=nil,tool="select",snap=.5,angle=15,
         playing=false,interaction=nil,change=change,select=select,press=press,
-        renderScale=1,maxCanvas=G.getSystemLimits().texturesize},View)
+        renderScale=1,maxCanvas=G.getSystemLimits().texturesize,textureImages={}},View)
 end
 
 function View:set(scene)
+    if not self.scene or self.scene.id~=scene.id then self.textureImages={}
+    else
+        local retained={}
+        for _,asset in ipairs(scene.textures or {}) do retained[asset.id]=true end
+        for id in pairs(self.textureImages) do
+            if not retained[id] and not Texture.builtinName(id) then self.textureImages[id]=nil end
+        end
+    end
     self.scene=scene
     self.objects=scene.objects
     self.parts={}
     for _,object in ipairs(scene.objects) do self.parts[object.id]=object end
+end
+
+function View:textureImage(id,asset)
+    asset=asset or Texture.asset(self.scene,id)
+    if not asset then return nil end
+    local pixels=asset.pixels.data
+    local previous=self.textureImages[id]
+    if previous and previous.data==pixels and previous.width==asset.width and previous.height==asset.height then return previous.image end
+    local data=love.image.newImageData(asset.width,asset.height,"rgba8",pixels)
+    local image=G.newImage(data,{mipmaps=true})
+    image:setWrap("repeat","repeat")
+    image:setMipmapFilter("linear")
+    self.textureImages[id]={image=image,data=pixels,width=asset.width,height=asset.height}
+    return image
 end
 
 function View:frame(id,orientation,instant)
@@ -152,7 +212,7 @@ function View:state(event)
             self.actors[p.id]=a
             if p.life and p.id==self.localID then self.yaw=p.yaw end
         end
-        a.goal,a.heading,a.color,a.name={p.x,p.y,p.z},p.yaw,p.color,p.name
+        a.goal,a.heading,a.color,a.name,a.look={p.x,p.y,p.z},p.yaw,p.color,p.name,p.look
         if p.id==self.localID then self.interaction=p.interaction end
     end
     for id in pairs(self.actors) do if not seen[id] then self.actors[id]=nil end end
@@ -187,7 +247,7 @@ function View:project(point)
         self.y+self.h*.5*(1-Mesh.dot(difference,self.up)*self.lensY/depth),depth
 end
 
-function View:mesh(kind,at,size,rgb,rotation,shine)
+function View:mesh(kind,at,size,rgb,rotation,shine,layer)
     local shader=self.shader
     shader:send("offset",at)
     shader:send("dimensions",size)
@@ -195,8 +255,29 @@ function View:mesh(kind,at,size,rgb,rotation,shine)
     shader:send("axisV",rotation[2])
     shader:send("axisW",rotation[3])
     shader:send("shine",shine or 0)
+    if layer~=self.activeLayer then
+        self.activeLayer=layer
+        if layer then
+            local image=self:textureImage(layer.asset)
+            shader:send("partTexture",image)
+            shader:send("textureLayer",{layer.face,layer.tileU,layer.tileV,layer.mode=="tile" and 1 or 0})
+        else shader:send("textureLayer",{-1,1,1,0}) end
+    end
     G.setColor(plain(rgb))
     G.draw(self.models[kind])
+end
+
+function View:partMesh(part,color,pulse)
+    local kind=part.kind=="spawn" and "box" or part.kind
+    local rotation,rgb=basis(part.rotation),{Mesh.rgb(color)}
+    local layers=part.textures or noLayers
+    local all=layers[1] and layers[1].face==0
+    self:mesh(kind,part.position,part.size,rgb,rotation,pulse,all and layers[1] or nil)
+    if #layers>(all and 1 or 0) then
+        G.setDepthMode("lequal",true)
+        for i=all and 2 or 1,#layers do self:mesh(kind,part.position,part.size,rgb,rotation,pulse,layers[i]) end
+        G.setDepthMode("less",true)
+    end
 end
 
 function View:avatar(a)
@@ -211,17 +292,20 @@ function View:avatar(a)
         self:mesh("box",add(a.at,Mesh.rotate(heading,plain(at)),1),size,color,rotation,0)
     end
     local swatch={Mesh.rgb(a.color)}
-    local jacket={swatch[1]*.84+.06,swatch[2]*.84+.08,swatch[3]*.84+.07}
+    local look=a.look
+    local jacket=look and {Mesh.rgb(look.shirt)} or {swatch[1]*.84+.06,swatch[2]*.84+.08,swatch[3]*.84+.07}
     local sleeve={jacket[1]*.70+.12,jacket[2]*.70+.12,jacket[3]*.70+.13}
-    local trousers={.17,.24,.24}
+    local trousers=look and {Mesh.rgb(look.pants)} or {.17,.24,.24}
+    local skin=look and {Mesh.rgb(look.skin)} or {.86,.82,.72}
+    local visor=look and {Mesh.rgb(look.visor)} or {.14,.25,.24}
     local swing=math.sin(a.phase)*a.swing
     block({0,.903,0},{.594,.598,.315},jacket)
-    block({0,1.412,0},{.461,.414,.424},{.86,.82,.72})
+    block({0,1.412,0},{.461,.414,.424},skin)
     block({-.436,1.189,0},{.252,.597,.30},sleeve,swing)
     block({.436,1.189,0},{.252,.597,.30},sleeve,-swing)
     block({-.150,.604,0},{.284,.604,.312},trousers,-swing)
     block({.150,.604,0},{.284,.604,.312},trousers,swing)
-    block({0,1.442,-.217},{.342,.107,.016},{.14,.25,.24})
+    block({0,1.442,-.217},{.342,.107,.016},visor)
     block({.134,1.026,-.163},{.094,.045,.015},{.92,.97,.84})
 end
 
@@ -301,6 +385,8 @@ function View:draw(x,y,w,h)
     self.shader:send("eyeUp",self.up)
     self.shader:send("eyeForward",self.forward)
     self.shader:send("lens",{self.lensX,self.lensY})
+    self.activeLayer=nil
+    self.shader:send("textureLayer",{-1,1,1,0})
     for _,o in ipairs(self.objects) do
         local fx=self.effects[o.id]
         if not fx or fx.visible then
@@ -310,7 +396,7 @@ function View:draw(x,y,w,h)
                 color=o.enabled and "#64ba80" or "#88938b"
                 pulse=.16
             end
-            self:mesh(o.kind=="spawn" and "box" or o.kind,o.position,o.size,{Mesh.rgb(color)},basis(o.rotation),pulse)
+            self:partMesh(o,color,pulse)
         end
     end
     for _,a in pairs(self.actors) do if self.playing then self:avatar(a) end end

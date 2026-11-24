@@ -3,6 +3,7 @@ local serde=require("@lune/serde")
 local task=require("@lune/task")
 local Mesh=require("./geometry")
 local Place=require("./place")
+local Texture=require("./texture")
 local WIDTH,HEIGHT=480,270
 local W,H=WIDTH*2,HEIGHT*2
 local light=Mesh.unit({-.4,.87,.45})
@@ -22,7 +23,7 @@ local function chunk(tag,data)
     for i=1,#data do crc=bit32.bxor(bit32.rshift(crc,8),lut[bit32.band(bit32.bxor(crc,data:byte(i)),255)]) end
     return string.pack(">I4",#data)..tag..data..string.pack(">I4",bit32.bnot(crc))
 end
-local function draw(pixels,depth,a,b,c,red,green,blue)
+local function draw(pixels,depth,a,b,c,red,green,blue,paint,uv)
     local dx,dy=b[1]-a[1],b[2]-a[2]
     local ex,ey=c[1]-a[1],c[2]-a[2]
     local div=dx*ey-dy*ex
@@ -44,9 +45,19 @@ local function draw(pixels,depth,a,b,c,red,green,blue)
                 if z>buffer.readf32(depth,i*4) then
                     buffer.writef32(depth,i*4,z)
                     local shade=a[4]+u*dl1+v*dl2
-                    buffer.writeu8(pixels,i*3,math.min(255,255*red*shade+9))
-                    buffer.writeu8(pixels,i*3+1,math.min(255,255*green*shade+12))
-                    buffer.writeu8(pixels,i*3+2,math.min(255,255*blue*shade+14))
+                    local r,g,b=red,green,blue
+                    if paint then
+                        local su,sv=(uv[1]+u*uv[3]+v*uv[5])/z,(uv[2]+u*uv[4]+v*uv[6])/z
+                        if paint.repeatUV then su,sv=su%1,sv%1
+                        else su,sv=math.clamp(su,0,.9999),math.clamp(sv,0,.9999) end
+                        local index=(math.floor(sv*paint.height)*paint.width+math.floor(su*paint.width))*4+1
+                        local rr,gg,bb,aa=paint.data:byte(index,index+3)
+                        local alpha=aa/255
+                        r,g,b=r+(rr/255-r)*alpha,g+(gg/255-g)*alpha,b+(bb/255-b)*alpha
+                    end
+                    buffer.writeu8(pixels,i*3,math.min(255,255*r*shade+9))
+                    buffer.writeu8(pixels,i*3+1,math.min(255,255*g*shade+12))
+                    buffer.writeu8(pixels,i*3+2,math.min(255,255*b*shade+14))
                 end
             end
             u,v=u+du,v+dv
@@ -76,6 +87,12 @@ function Thumbnail.render(place)
     local count=0
     for _,part in ipairs(place.objects) do
         local r,g,b=Mesh.rgb(part.color)
+        local paints={}
+        for _,layer in ipairs(part.textures or {}) do
+            local asset=Texture.asset(place,layer.asset)
+            if asset then paints[layer.face]={layer=layer,width=asset.width,height=asset.height,
+                data=asset.pixels.data,repeatUV=layer.mode=="tile"} end
+        end
         local rotation=Place.rotation(part.rotation)
         local vertices={}
         local function project(v)
@@ -91,7 +108,22 @@ function Thumbnail.render(place)
         end
         for _,triangle in ipairs(Mesh[part.kind=="spawn" and "box" or part.kind]) do
             local a,v,c=project(triangle[1]),project(triangle[2]),project(triangle[3])
-            if a[5]>0 or v[5]>0 or c[5]>0 then draw(pixels,depth,a,v,c,r,g,b) end
+            if a[5]>0 or v[5]>0 or c[5]>0 then
+                local paint,uv
+                if next(paints) then
+                    local i,j,k=triangle[1],triangle[2],triangle[3]
+                    local face=Texture.face(i[4]+j[4]+k[4],i[5]+j[5]+k[5],i[6]+j[6]+k[6])
+                    paint=paints[face] or paints[0]
+                    if paint then
+                        local ua,va=Texture.uv(face,i,part.size,paint.layer)
+                        local ub,vb=Texture.uv(face,j,part.size,paint.layer)
+                        local uc,vc=Texture.uv(face,k,part.size,paint.layer)
+                        local u0,v0=ua*a[3],va*a[3]
+                        uv={u0,v0,ub*v[3]-u0,vb*v[3]-v0,uc*c[3]-u0,vc*c[3]-v0}
+                    end
+                end
+                draw(pixels,depth,a,v,c,r,g,b,paint,uv)
+            end
         end
         count+=1
         if count%24==0 then task.wait() end

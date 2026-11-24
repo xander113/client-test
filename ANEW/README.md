@@ -1,4 +1,4 @@
-# Pot 0.4
+# Pot 0.5
 
 Pot Client and Pot Studio are native desktop apps. Lua runs the LÖVE windows, tools, and 3D viewport. Luau runs the world model, movement, scripts, publishing, and PotRenderService in a separate Lune runtime. Projects use binary `.pot` files. The desktop apps communicate with the runtime using length-prefixed MessagePack over authenticated loopback.
 
@@ -28,6 +28,14 @@ Select **Workspace**, a part, or a script in Explorer and use **+ Add**. Parts a
 
 Add a **Spawn Point**, move or rotate it, and optionally choose **Make default** in its properties. Without a preferred point, enabled spawn points are used in order. The Workspace fallback position is used in worlds without an enabled point. Choose **Workspace** and set **Character reset** to **Disabled** to block manual resets for everyone in that world. **F6** tests reset in Studio when the world allows it.
 
+## Movement and textures
+
+New and migrated worlds default to **WalkSpeed 16 studs per second**, **JumpHeight 7.2 studs**, and gravity of **196.2 studs per second squared**. Edit **WalkSpeed** and **JumpHeight** in Workspace properties. The same simulation runs in Studio playtest, solo play, and multiplayer. Players collide with rotated boxes, spheres, and cylinders and step onto low ledges without jumping.
+
+Select a part and open **Textures** in Properties. Select any face or **All faces**, then choose a built-in image or import a PNG. **Tile** repeats the image at the entered U and V dimensions in studs. **Fit once** stretches it across the face. A face-specific layer takes priority over **All faces**. PNG alpha controls how much of the original part color shows through. Use **Apply textures** to save the changes in the project.
+
+Paste a PNG path into the texture editor or drop a PNG onto Studio with a part selected. Studio accepts PNGs up to 1 MB and 4096 pixels per side. It stores up to 16 imported images per project as RGBA pixels with a longest side of 128 pixels. Studio, Client, and PotRenderService read these images from binary project data, so the original image files can stay on the creator's computer.
+
 ## Pot scripting
 
 Add a script in Explorer or choose **Add Script** in a part's properties. Start with the Press, Touch, or Spawn example. **Check script** validates the source and **Apply** saves it in the working project. **Playtest** runs the working copy in the viewport. Binary `.pot` files retain the hierarchy, spawn configuration, and scripts. Studio opens earlier `.pot` and first-release `.pot.json` projects.
@@ -55,6 +63,7 @@ Pot accepts a bounded Lua/Luau subset with event callbacks, typed locals, litera
 | `Pot.after(seconds, function() … end)` | Run a delayed action. |
 | `Pot.onSpawn(function(player) … end)` | Run a callback when a player joins, resets, or returns after falling out of the world. |
 | `Pot.spawn(player, spawnPointId)` | Move a player to an enabled Spawn Point from a Script. The move preserves the session and does not fire `onSpawn` again. |
+| `Pot.setWalkSpeed(player, speed)`, `Pot.setJumpHeight(player, height)` | Change one player's movement from a Script for the current character. Values use studs per second and studs. |
 
 For a teleporter, place a Script under a part and paste an enabled Spawn Point's ID into the call.
 
@@ -87,6 +96,22 @@ Run `lune run luau/main.luau worlds /absolute/path/to/ANEW/luau` to start a worl
 | `GET /v3/worlds/{id}/spawns` | Read-authorized MessagePack spawn metadata and world reset policy. |
 | `GET /v3/session` via WebSocket | Binary join, input, press, reset, and authoritative snapshots. The first frame supplies the world ID and access credential. `welcome.allowReset` advertises the policy. A `reset` packet can reset the authenticated player's avatar and returns `resetResult`. |
 | `POST /v3/render` | Generate a map PNG from a binary place. |
+
+## Accounts for the future website
+
+Pot Worlds stores each account's stable ID, display name, four avatar colors, and integer currency balance. Configure `POT_ACCOUNT_ADMIN_TOKEN` for account provisioning and currency operations on the trusted service. Use `POT_ACCOUNT_DATA_DIR` for durable storage. It defaults to the `accounts` subdirectory of `POT_WORLD_DATA_DIR` when configured. Run one writer per account data directory.
+
+The website can provision accounts after its own authentication. Provide 32 bytes of cryptographically random data encoded as 64 lowercase hexadecimal characters for each account credential. The service stores a SHA-256 digest and allows credential rotation. For desktop testing, set `POT_ACCOUNT_TOKEN` with `POT_API_ENDPOINT` in the launch environment. Account sessions use the saved display name and palette. Guest sessions remain available. Balances are visible through the authenticated account API.
+
+| Binary v3 route | Credential and request |
+| --- | --- |
+| `GET /v3/account/me` | Account token. Returns `id`, `displayName`, `look`, and `balance`. |
+| `PUT /v3/account/me/look` | Account token. Supply `skin`, `shirt`, `pants`, and `visor` as `#rrggbb` strings. |
+| `GET /v3/accounts/{id}` | Account admin token. Reads one account. |
+| `PUT /v3/accounts/{id}` | Account admin token. Provision an account with `displayName` and `credential`. Supply `look` optionally, or update the existing fields and rotate the credential. |
+| `POST /v3/accounts/{id}/currency` | Account admin token. Supply `operation` and a signed integer `delta`. Retrying the same operation returns its recorded result. Conflicting retries and insufficient balances return HTTP 409. |
+
+All requests and responses above use MessagePack. Account administration is separate from publishing credentials. These endpoints run in Pot Worlds. The `WEBSERVICE` folder remains reserved for the website.
 
 ## Build and test
 

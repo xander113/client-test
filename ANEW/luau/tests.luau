@@ -10,6 +10,9 @@ local Script=require("./scripting")
 local Store=require("./store")
 local Network=require("./network")
 local Hierarchy=require("./hierarchy")
+local Physics=require("./physics")
+local Accounts=require("./accounts")
+local Thumbnail=require("./thumbnail")
 local root=assert(process.args[1],"Provide the absolute luau directory.")
 local sample=Demo.load(root,"terrace-park")
 local p, bytes=Place.wire(sample)
@@ -32,12 +35,51 @@ for _,bad in ipairs({
     "Pot.onTouch(function() local x = {1, 2} end)",
 }) do assert(not pcall(Script.compile,bad)) end
 local old=Place.decode('{"schemaVersion":1,"id":"old","name":"Old","description":"","spawn":{"x":0,"y":0,"z":0},"objects":[]}')
-assert(old.schemaVersion==4 and #old.scripts==0 and old.allowReset)
+assert(old.schemaVersion==Place.version and #old.scripts==0 and old.allowReset)
 local migrated=Place.validate({schemaVersion=3,id="old-script",name="Old script",description="",spawn=p.spawn,
     objects={p.objects[1]},scripts={{part=p.objects[1].id,enabled=true,source=p.scripts[1].source}}})
 assert(migrated.scripts[1].kind=="script" and migrated.scripts[1].parent==p.objects[1].id)
+assert(migrated.movement.walkSpeed==16 and migrated.movement.jumpHeight==7.2)
+
+local runWorld=Place.validate({schemaVersion=Place.version,id="track",name="Track",description="",spawn={x=0,y=0,z=0},
+    scripts={},objects={{id="floor",name="Floor",kind="box",position={0,-.5,0},size={128,1,128},
+        rotation={0,0,0},color="#ccd5cc",solid=true}}})
+local track=Room.create(runWorld)
+local runner=Room.add(track)
+Room.step(track)
+for _=1,60 do
+    assert(Room.input(track,runner,{x=1,z=1,yaw=0,jump=0}))
+    Room.step(track)
+end
+assert(math.abs(math.sqrt(runner.at[1]^2+runner.at[3]^2)-16)<1e-6,"Default diagonal WalkSpeed must be 16.")
+Room.input(track,runner,{x=0,z=0,yaw=0,jump=1})
+local apex=0
+for _=1,60 do Room.step(track);apex=math.max(apex,runner.at[2]) end
+assert(math.abs(apex-7.2)<.008 and runner.grounded,"Jump must respect its authored height and land.")
+runWorld.objects[#runWorld.objects+1]={id="wall",name="Wall",kind="box",position={4,3,0},size={.10,6,8},
+    rotation={0,0,0},color="#aaaaaa",solid=true}
+runWorld.movement.walkSpeed=Physics.maxSpeed
+local sprint=Room.create(runWorld)
+local sprinter=Room.add(sprint)
+for _=1,20 do Room.input(sprint,sprinter,{x=1,z=0,yaw=0,jump=0});Room.step(sprint) end
+assert(sprinter.at[1]>3.6 and sprinter.at[1]<=3.65,"Thin walls must resist fast movement.")
+local rotated={kind="box",size={.2,8,8},position={0,4,0},rotation={0,45,0}}
+local lo,hi=Place.bounds(rotated)
+local shape=Physics.collider(rotated,Place.rotation(rotated.rotation),lo,hi)
+assert(Physics.span(shape,0,0) and not Physics.span(shape,2.5,-2.5),"Rotated colliders must leave their bounding-box corners open.")
 
 local function duplicate(value) return Wire.decode(Wire.encode(value)) end
+local solidImage=Wire.bytes(string.char(44,145,214,255):rep(4))
+runWorld.textures=Wire.array({{id="blue-tile",name="Blue tile",width=2,height=2,pixels=solidImage}})
+local bareImage=Thumbnail.render(runWorld)
+runWorld.objects[1].textures=Wire.array({{asset="blue-tile",face=3,mode="fit",tileU=4,tileV=4}})
+local textured=Place.validate(runWorld)
+assert(Thumbnail.render(textured)~=bareImage,"Map previews must show authored texture faces.")
+local brokenTexture=duplicate(textured)
+brokenTexture.textures[1].pixels=Wire.bytes("short")
+assert(not pcall(Place.validate,brokenTexture))
+p.textures[1]=textured.textures[1]
+p.objects[1].textures=Wire.array({{asset="blue-tile",face=3,mode="tile",tileU=5,tileV=4}})
 local point=duplicate(p.objects[#p.objects])
 point.id,point.name,point.position,point.rotation="upper-spawn","Upper spawn",{4,3,9},{0,90,0}
 point.parent=p.objects[1].id
@@ -57,6 +99,7 @@ cycle.scripts[1].parent="gate-spawn"
 assert(not pcall(Place.validate,cycle))
 assert(not pcall(Script.compile,p.scripts[4].source,"local",true))
 assert(not pcall(Script.compile,'Pot.onSpawn(function() Pot.setSolid("self", false) end)',"local",true))
+assert(not pcall(Script.compile,'Pot.onSpawn(function(player) Pot.setWalkSpeed(player, 24) end)',"local",true))
 assert(not pcall(Script.compile,p.scripts[3].source,"local",false))
 
 local authority=Room.create(p)
@@ -79,9 +122,12 @@ local file=tmp.."/Rotated project.pot"
 p.objects[1].rotation[2]=27
 Place.save(file,p)
 assert(Place.load(file).objects[1].rotation[2]==27)
+assert(Place.load(file).textures[1].pixels.data==solidImage.data)
 Place.save(file,p)
 local ports=assert(process.args[3],"Provide a test port.")
-local service=Network.serve(Store.new(root,tmp),{host="127.0.0.1",port=tonumber(ports),read="read",write="write"})
+local accountDir=tmp.."/accounts"
+local service=Network.serve(Store.new(root,tmp),{host="127.0.0.1",port=tonumber(ports),read="read",write="write",
+    accountDir=accountDir,accountAdmin="account-admin"})
 local base="http://127.0.0.1:"..ports
 local stranger=Network.remote(base,"","")
 assert(not pcall(stranger.list))
@@ -91,6 +137,7 @@ p.id="test-world"
 studio.publish(p)
 assert(studio.managed()[1].id==p.id)
 assert(studio.published(p.id).objects[1].rotation[2]==27)
+assert(studio.published(p.id).textures[1].pixels.data==solidImage.data)
 local spawns=studio.spawns(p.id)
 assert(spawns.allowReset and spawns.defaultSpawn=="terrace-entry" and #spawns.points==2)
 assert(not pcall(stranger.spawns,p.id))
@@ -141,9 +188,54 @@ studio.publish(locked)
 assert(studio.spawns(locked.id).allowReset==false)
 local disallowed=studio.join(locked.id)
 assert(disallowed.welcome.allowReset==false and not sendReset(disallowed).ok)
+
+local function accountRequest(method,path,key,body,status)
+    local res=net.request({url=base..path,method=method,headers={Authorization="Bearer "..key,["Content-Type"]=Wire.mime},
+        body=if body then Wire.encode(body) else nil})
+    assert(res.statusCode==status,method.." "..path.." returned "..res.statusCode.." instead of "..status)
+    return Wire.decode(res.body)
+end
+local admin="account-admin"
+local firstKey,secondKey,rotatedKey=string.rep("a",64),string.rep("b",64),string.rep("c",64)
+local firstAccount="/v3/accounts/maple"
+local secondAccount="/v3/accounts/pine"
+local own="/v3/account/me"
+accountRequest("PUT",firstAccount,"write",{displayName="Maple Pilot",credential=firstKey},401)
+assert(accountRequest("PUT",firstAccount,admin,{displayName="Maple Pilot",credential=firstKey},200).balance==0)
+accountRequest("PUT",secondAccount,admin,{displayName="Pine Builder",credential=firstKey},409)
+accountRequest("PUT",secondAccount,admin,{displayName="Pine Builder",credential=secondKey},200)
+local palette={skin="#bc936d",shirt="#248ebe",pants="#233145",visor="#194039"}
+assert(accountRequest("PUT",own.."/look",firstKey,palette,200).look.shirt==palette.shirt)
+assert(accountRequest("GET",own,secondKey,nil,200).id=="pine")
+accountRequest("GET",firstAccount,secondKey,nil,401)
+local entry={operation="reward-1",delta=120}
+accountRequest("POST",firstAccount.."/currency",firstKey,entry,401)
+assert(accountRequest("POST",firstAccount.."/currency",admin,entry,200).balance==120)
+assert(accountRequest("POST",firstAccount.."/currency",admin,entry,200).balance==120)
+accountRequest("POST",firstAccount.."/currency",admin,{operation="reward-1",delta=121},409)
+accountRequest("POST",firstAccount.."/currency",admin,{operation="overdraw",delta=-121},409)
+assert(accountRequest("POST",firstAccount.."/currency",admin,{operation="spend-1",delta=-45},200).balance==75)
+assert(accountRequest("GET",own,secondKey,nil,200).balance==0)
+accountRequest("PUT",firstAccount,admin,{credential=rotatedKey},200)
+accountRequest("GET",own,firstKey,nil,401)
+local reopened=Accounts.new(accountDir)
+assert(reopened.identify(rotatedKey)=="maple" and reopened.identify(firstKey)==nil and reopened.get("maple").balance==75)
+assert(reopened.adjust("maple","reward-1",120).balance==120 and reopened.get("maple").balance==75)
+assert(not pcall(Network.remote(base,"read",nil,firstKey).join,p.id))
+local signedIn=Network.remote(base,"read",nil,rotatedKey).join(p.id)
+receive(signedIn,function(frame)
+    if frame.type~="state" then return false end
+    for _,actor in ipairs(frame.players) do
+        if actor.id==signedIn.welcome.id then
+            assert(actor.name=="Maple Pilot" and actor.look.shirt==palette.shirt and actor.balance==nil and actor.account==nil)
+            return true
+        end
+    end
+    return false
+end)
 studio.remove(p.id)
 studio.remove(locked.id)
 assert(#studio.managed()==0)
 service:stop()
-print("Luau tests passed: migrations, nested scripts, local effect isolation, spawn points and scripting, authenticated publishing, thumbnails, and multiplayer reset policy.")
+print("Luau tests passed: movement, rotated collisions, binary textures and previews, multiplayer spawning and resets, accounts and durable currency.")
 process.exit(0)

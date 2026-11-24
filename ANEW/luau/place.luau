@@ -3,8 +3,10 @@ local serde = require("@lune/serde")
 local Wire = require("./wire")
 local Script = require("./scripting")
 local Hierarchy = require("./hierarchy")
+local Physics = require("./physics")
+local Texture = require("./texture")
 
-local Place = {version=4, limit=256*1024, magic="POT\0\1"}
+local Place = {version=5, limit=1536*1024, magic="POT\0\1"}
 local sequence = 0
 local nonce = math.random(0,0xffffff)
 local kinds = {box=true,sphere=true,cylinder=true,spawn=true}
@@ -23,28 +25,47 @@ function Place.serial()
     -- Unique within a live process. The native app supplies independent process identities.
     return string.format("%x-%x-%x-%x", os.time(), math.floor(os.clock()*1000), nonce, sequence)
 end
-local function text(s, max, required)
+function Place.text(s, max, required)
     local chars = type(s)=="string" and utf8.len(s)
     return chars and chars<=max and (not required or s:find("%S")) and not s:find("%c")
 end
+local text=Place.text
 local function vector(v, lo, hi, lowY)
     return type(v)=="table" and #v==3 and Place.number(v[1],lo,hi) and
         Place.number(v[2],lowY or lo,hi) and Place.number(v[3],lo,hi)
 end
 
 function Place.validate(p)
-    assert(type(p)=="table" and (p.schemaVersion==4 or p.schemaVersion==3 or p.schemaVersion==2 or p.schemaVersion==1),
+    assert(type(p)=="table" and Place.number(p.schemaVersion,1,Place.version) and p.schemaVersion%1==0,
         "Unsupported Pot project version.")
     local old = p.schemaVersion
     assert(Place.id(p.id) and text(p.name,80,true) and text(p.description,400,false), "Invalid place name, ID or description.")
     assert(type(p.spawn)=="table" and vector({p.spawn.x,p.spawn.y,p.spawn.z},-250,250,-40), "Spawn is outside the place.")
     assert(type(p.objects)=="table" and #p.objects<=400, "A place has at most 400 parts.")
     assert(old<4 or p.allowReset==nil or type(p.allowReset)=="boolean", "Invalid character reset policy.")
+    local movement=if old>=5 then p.movement else nil
+    assert(movement==nil or type(movement)=="table", "Invalid movement settings.")
+    local speed=if movement and movement.walkSpeed~=nil then movement.walkSpeed else Physics.walkSpeed
+    local jump=if movement and movement.jumpHeight~=nil then movement.jumpHeight else Physics.jumpHeight
+    assert(Place.number(speed,0,Physics.maxSpeed) and Place.number(jump,0,Physics.maxJump), "Invalid WalkSpeed or JumpHeight.")
     local result = {
         schemaVersion=Place.version,id=p.id,name=p.name,description=p.description,
         spawn={x=p.spawn.x,y=p.spawn.y,z=p.spawn.z}, allowReset=old<4 or p.allowReset~=false,
-        objects=Wire.array(),scripts=Wire.array(),
+        objects=Wire.array(),scripts=Wire.array(),textures=Wire.array(),movement={walkSpeed=speed,jumpHeight=jump},
     }
+    local assets=if old>=5 and p.textures~=nil then p.textures else {}
+    assert(type(assets)=="table" and #assets<=Texture.maxAssets,"A world can keep up to "..Texture.maxAssets.." imported textures.")
+    local known={}
+    for _,asset in ipairs(assets) do
+        assert(type(asset)=="table" and Place.id(asset.id) and text(asset.name,64,true) and not known[asset.id]
+            and not Texture.builtinName(asset.id),"Invalid or duplicate texture asset.")
+        local w,h=asset.width,asset.height
+        assert(Place.number(w,1,Texture.maxSize) and Place.number(h,1,Texture.maxSize) and w%1==0 and h%1==0
+            and Wire.isBytes(asset.pixels) and type(asset.pixels.data)=="string" and #asset.pixels.data==w*h*4,
+            "Invalid texture pixels for "..asset.name..".")
+        known[asset.id]=true
+        result.textures[#result.textures+1]={id=asset.id,name=asset.name,width=w,height=h,pixels=asset.pixels}
+    end
     local ids = {}
     for i,o in ipairs(p.objects) do
         assert(type(o)=="table" and Place.id(o.id) and not ids[o.id] and kinds[o.kind] and text(o.name,80,true),
@@ -54,10 +75,25 @@ function Place.validate(p)
         assert(Place.color(o.color) and type(o.solid)=="boolean", "Invalid appearance for "..o.name..".")
         ids[o.id]=true
         assert(old<4 or o.parent==nil or Place.id(o.parent),"Invalid part parent.")
-        assert(o.kind~="spawn" or (old==4 and type(o.enabled)=="boolean"),"Invalid spawn point.")
-        result.objects[i]={id=o.id,name=o.name,kind=o.kind,position=table.clone(o.position),
+        assert(o.kind~="spawn" or (old>=4 and type(o.enabled)=="boolean"),"Invalid spawn point.")
+        local part={id=o.id,name=o.name,kind=o.kind,position=table.clone(o.position),
             size=table.clone(o.size),rotation=table.clone(rotation),color=o.color:lower(),solid=o.solid,
-            parent=if old==4 then o.parent else nil,enabled=if o.kind=="spawn" then o.enabled else nil}
+            parent=if old>=4 then o.parent else nil,enabled=if o.kind=="spawn" then o.enabled else nil}
+        if old>=5 and o.textures~=nil then
+            assert(type(o.textures)=="table" and #o.textures<=#Texture.faces,"Invalid part textures.")
+            local seen={}
+            part.textures=Wire.array()
+            for _,layer in ipairs(o.textures) do
+                assert(type(layer)=="table" and Place.number(layer.face,0,#Texture.faces-1) and layer.face%1==0
+                    and not seen[layer.face] and Place.id(layer.asset) and (known[layer.asset] or Texture.builtinName(layer.asset))
+                    and (layer.mode=="tile" or layer.mode=="fit") and Place.number(layer.tileU,.25,128)
+                    and Place.number(layer.tileV,.25,128),"Invalid texture layer on "..o.name..".")
+                seen[layer.face]=true
+                part.textures[#part.textures+1]={face=layer.face,asset=layer.asset,mode=layer.mode,tileU=layer.tileU,tileV=layer.tileV}
+            end
+            table.sort(part.textures,function(a,b)return a.face<b.face end)
+        end
+        result.objects[i]=part
     end
     local scripts = if old>=3 then p.scripts else {}
     assert(type(scripts)=="table" and #scripts<=48, "A place has at most 48 scripts.")
@@ -80,7 +116,7 @@ function Place.validate(p)
     for _,node in pairs(nodes) do
         assert(Hierarchy.canParent(nodes,node,node.parent),"Invalid hierarchy at "..node.name..". A parent must exist and cannot be a descendant.")
     end
-    if old==4 and p.defaultSpawn~=nil then
+    if old>=4 and p.defaultSpawn~=nil then
         local spawn=Place.id(p.defaultSpawn) and nodes[p.defaultSpawn]
         assert(spawn and spawn.kind=="spawn" and spawn.enabled,"Default spawn must be an enabled spawn point.")
         result.defaultSpawn=p.defaultSpawn
@@ -91,7 +127,7 @@ end
 function Place.wire(p)
     local canonical=Place.validate(p)
     local content=Wire.encode(canonical)
-    assert(#content+#Place.magic<=Place.limit,"Place is too large. Remove some parts or scripts.")
+    assert(#content+#Place.magic<=Place.limit,"Place is too large. Remove unused textures, parts or scripts.")
     return canonical, content
 end
 

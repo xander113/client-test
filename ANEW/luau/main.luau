@@ -9,6 +9,7 @@ local Script=require("./scripting")
 local Room=require("./room")
 local Store=require("./store")
 local Network=require("./network")
+local Accounts=require("./accounts")
 
 local env=process.env
 local mode,root=process.args[1],process.args[2]
@@ -22,7 +23,7 @@ local function desktop()
     local remote,networkMode=nil,"local"
     if env.POT_API_ENDPOINT and env.POT_API_ENDPOINT~="" then
         local ok,value=pcall(function()
-            local backend=Network.remote(env.POT_API_ENDPOINT,env.POT_API_READ_TOKEN,env.POT_API_WRITE_TOKEN)
+            local backend=Network.remote(env.POT_API_ENDPOINT,env.POT_API_READ_TOKEN,env.POT_API_WRITE_TOKEN,env.POT_ACCOUNT_TOKEN)
             Network.within(2,backend.list)
             return backend
         end)
@@ -107,12 +108,15 @@ local function desktop()
                     local e=Wire.decode(raw,64*1024)
                     if e.type=="state" and type(e.players)=="table" and #e.players<=24 and type(e.effects)=="table" and #e.effects<=400 then
                         for _,p in ipairs(e.players) do
+                            local palette=p.look and Accounts.look(p.look)
                             assert(Place.id(p.id) and type(p.name)=="string" and #p.name<=80 and utf8.len(p.name) and Place.color(p.color)
                                 and Place.number(p.x,-320,320) and Place.number(p.y,-40,390)
                                 and Place.number(p.z,-320,320) and Place.number(p.yaw,-math.pi,math.pi)
                                 and (p.life==nil or Place.number(p.life,0,4294967295))
                                 and (p.arrivals==nil or Place.number(p.arrivals,0,4294967295))
-                                and (p.interaction==nil or Place.id(p.interaction)))
+                                and (p.interaction==nil or Place.id(p.interaction))
+                                and (p.look==nil or palette))
+                            p.look=palette
                         end
                         for _,fx in ipairs(e.effects) do
                             assert(Place.id(fx.id) and Place.color(fx.color) and type(fx.solid)=="boolean"
@@ -154,6 +158,16 @@ local function desktop()
         elseif a=="load" then return ownLoad(id)
         elseif a=="thumbnail" then return Wire.bytes(if remote then remote.preview(id) else preview(ownLoad(id)))
         elseif a=="sample" then return store.sample()
+        elseif a=="textureFile" then
+            assert(type(c.path)=="string" and #c.path<=4096 and c.path:lower():match("%.png$"),"Choose a PNG texture.")
+            local info=fs.metadata(c.path)
+            assert(info.exists and info.kind=="file","The PNG file path could not be found.")
+            assert(info.size<=1024*1024,"Choose a PNG file up to 1 MB.")
+            local file=fs.readFile(c.path)
+            assert(#file>=33 and #file<=1024*1024 and file:sub(1,16)=="\137PNG\13\10\26\10\0\0\0\13IHDR","Invalid PNG image.")
+            local width,height=string.unpack(">I4I4",file,17)
+            assert(Place.number(width,1,4096) and Place.number(height,1,4096),"Choose an image no larger than 4096 × 4096.")
+            return Wire.bytes(file)
         elseif a=="open" then return Place.load(c.path)
         elseif a=="save" then Place.save(c.path,c.scene); return true
         elseif a=="publish" then return if remote then remote.publish(c.scene) else store.publish(c.scene)
@@ -261,10 +275,13 @@ end
 if mode=="desktop" then
     desktop()
 elseif mode=="worlds" then
+    local accountDir=env.POT_ACCOUNT_DATA_DIR
+    if not accountDir and env.POT_WORLD_DATA_DIR and env.POT_WORLD_DATA_DIR~="" then accountDir=env.POT_WORLD_DATA_DIR.."/accounts" end
     local service=Network.serve(Store.new(root,env.POT_WORLD_DATA_DIR),{
         host=env.POT_WORLD_HOST or "127.0.0.1",port=tonumber(env.POT_WORLD_PORT or "4831"),
         read=env.POT_WORLD_READ_TOKEN,write=env.POT_WORLD_WRITE_TOKEN,
         renderURL=env.POT_RENDER_ENDPOINT,renderToken=env.POT_RENDER_TOKEN,
+        accountDir=accountDir,accountAdmin=env.POT_ACCOUNT_ADMIN_TOKEN,
     })
     print("Pot Worlds listening on "..service.ip..":"..service.port)
 elseif mode=="render" then
