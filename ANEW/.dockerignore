@@ -1,0 +1,7 @@
+*
+!luau/
+!luau/**
+luau/tests*
+!WEBSERVICE/
+!WEBSERVICE/deploy/
+!WEBSERVICE/deploy/runtime.Dockerfile

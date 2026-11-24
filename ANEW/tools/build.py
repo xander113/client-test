@@ -14,7 +14,7 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 LOVE = "11.5"
 LUNE = "0.11.1"
 BASE_LOVE = f"https://github.com/love2d/love/releases/download/{LOVE}/"
@@ -78,7 +78,7 @@ def bundle_game(product, path):
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as bundle:
         for file in sorted((ROOT / "game").iterdir()):
             bundle.write(file, file.name)
-        for name in ("wire.lua", "geometry.lua", "hierarchy.lua", "physics.lua", "texture.lua"):
+        for name in ("wire.lua", "geometry.lua", "hierarchy.lua", "texture.lua"):
             bundle.write(ROOT / "luau" / name, name)
         bundle.write(ROOT / "build" / "icons" / f"{product}.png", "icon.png")
         bundle.writestr("product.lua", f'return "{product}"\n')

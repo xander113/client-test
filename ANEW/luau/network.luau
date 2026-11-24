@@ -54,15 +54,22 @@ end
 local function fail(code,message) return reply(code,{message=message}) end
 local function close(socket,code) pcall(function() socket:close(code or 1000) end) end
 
-local function request(url,verb,token,data,media,max)
+local function transfer(url,verb,token,data)
     local headers={}
     if token and token~="" then headers.Authorization="Bearer "..token end
     if data then headers["Content-Type"]=Wire.mime end
-    local res=Network.within(8,function()
+    return Network.within(8,function()
         return net.request({url=url,method=verb,headers=headers,body=data})
     end)
+end
+
+local function response(res,media,max)
     if res.statusCode==401 or res.statusCode==403 then error("Publishing or library access is required.",0) end
-    assert(res.ok,"The Pot service returned status "..res.statusCode..".")
+    if not res.ok then
+        local ok,problem=pcall(Wire.decode,res.body,4096)
+        error(if ok and type(problem)=="table" and type(problem.message)=="string" then problem.message:sub(1,300)
+            else "The Pot service returned status "..res.statusCode..".",0)
+    end
     local kind=res.headers["content-type"] or res.headers["Content-Type"]
     if type(kind)=="table" then kind=kind[1] end
     assert(type(kind)=="string" and kind:match("^[^;]+")==media,"Unexpected Pot service response.")
@@ -74,8 +81,14 @@ local function request(url,verb,token,data,media,max)
     return Wire.decode(res.body,max)
 end
 
+local function request(url,verb,token,data,media,max)
+    return response(transfer(url,verb,token,data),media,max)
+end
+
 function Network.remote(url,read,write,account)
     local base=endpoint(url)
+    local accountKey=if account and account~="" then account else nil
+    local libraryKey=if read and read~="" then read else accountKey
     local function action(verb,path,key,body,media)
         return request(base..path,verb,key,body,media or Wire.mime,media and 1024*1024 or Place.limit)
     end
@@ -84,8 +97,9 @@ function Network.remote(url,read,write,account)
         return id
     end
     local function token()
-        assert(write and write~="","Set a Studio publishing credential for this endpoint.")
-        return write
+        local key=if write and write~="" then write else accountKey
+        assert(key,"Set a Studio publishing credential for this endpoint.")
+        return key
     end
     local function list(key,path)
         local items=action("GET",path,key)
@@ -97,14 +111,14 @@ function Network.remote(url,read,write,account)
         return items
     end
     return {
-        list=function() return list(read,"/v3/worlds") end,
+        list=function() return list(libraryKey,"/v3/worlds") end,
         load=function(id)
-            local value=Place.validate(action("GET","/v3/worlds/"..check(id),read))
+            local value=Place.validate(action("GET","/v3/worlds/"..check(id),libraryKey))
             assert(value.id==id,"The service returned a different world.")
             return value
         end,
-        spawns=function(id) return action("GET","/v3/worlds/"..check(id).."/spawns",read) end,
-        preview=function(id) return action("GET","/v3/worlds/"..check(id).."/thumbnail",read,nil,"image/png") end,
+        spawns=function(id) return action("GET","/v3/worlds/"..check(id).."/spawns",libraryKey) end,
+        preview=function(id) return action("GET","/v3/worlds/"..check(id).."/thumbnail",libraryKey,nil,"image/png") end,
         managed=function() return list(token(),"/v3/published") end,
         published=function(id)
             local value=Place.validate(action("GET","/v3/published/"..check(id),token()))
@@ -119,16 +133,38 @@ function Network.remote(url,read,write,account)
         remove=function(id) return action("DELETE","/v3/worlds/"..check(id),token()) end,
         join=function(id)
             check(id)
-            local ws=Network.within(6,function() return net.socket(base:gsub("^http","ws").."/v3/session") end)
+            local reply=transfer(base.."/v3/join","POST",libraryKey,Wire.encode({world=id}))
+            local legacy=false
+            if reply.statusCode==404 then
+                local ok,problem=pcall(Wire.decode,reply.body,4096)
+                legacy=ok and type(problem)=="table" and problem.message=="Unknown Pot route."
+            end
+            local path,hello,grant,place
+            if legacy then
+                path="/v3/session"
+                hello={type="join",world=id,credential=read or "",account=accountKey}
+            else
+                grant=response(reply,Wire.mime,Wire.limit)
+                assert(grant.world==id and Place.id(grant.server) and type(grant.socket)=="string"
+                    and grant.socket:match("^/v3/instances/[a-z][a-z0-9%-]*/socket$")
+                    and type(grant.ticket)=="string" and #grant.ticket==64 and grant.ticket:match("^[0-9a-f]+$")
+                    and Wire.isBytes(grant.project),"Invalid game admission.")
+                place=Place.validate(Wire.decode(grant.project.data,Place.limit))
+                assert(place.id==id and Store.revision(place)==grant.revision,"Game release integrity check failed.")
+                path=grant.socket
+                hello={type="join",world=id,ticket=grant.ticket}
+            end
+            local ws=Network.within(6,function() return net.socket(base:gsub("^http","ws")..path) end)
             local ok,welcome=pcall(function()
-                ws:send(Wire.encode({type="join",world=id,credential=read or "",account=account}),true)
+                ws:send(Wire.encode(hello),true)
                 local e=Wire.decode(Network.within(6,function() return ws:next() end),2048)
                 assert(e.type=="welcome" and Place.id(e.id) and (e.allowReset==nil or type(e.allowReset)=="boolean"),
                     "The server did not start a Pot session.")
+                assert(not grant or (e.server==grant.server and e.revision==grant.revision),"Game release changed during admission.")
                 return e
             end)
             if not ok then close(ws); error("Session access denied or unavailable.",0) end
-            return {socket=ws,welcome=welcome}
+            return {socket=ws,welcome=welcome,place=place}
         end,
     }
 end
@@ -166,9 +202,18 @@ function Network.render(host,port,token)
     return net.serve(port,{address=host,handleRequest=function(req)
         if req.path=="/healthz" and req.method=="GET" then return reply(200,{service="PotRenderService",status="ok"}) end
         if token and token~="" and not equal(credential(req),token) then return fail(401,"Access denied.") end
-        if req.path~="/v3/render" or req.method~="POST" then return fail(404,"Unknown render route.") end
+        if (req.path~="/v3/render" and req.path~="/v3/validate") or req.method~="POST" then return fail(404,"Unknown render route.") end
         if #req.body>Place.limit then return fail(413,"Binary place is too large.") end
-        local ok,p=pcall(function() return Place.validate(Wire.decode(req.body,Place.limit)) end)
+        local ok,p,blob=pcall(function()
+            local input=if req.body:sub(1,#Place.magic)==Place.magic then Place.decode(req.body) else Wire.decode(req.body,Place.limit)
+            local canonical,data=Place.wire(input)
+            if req.path=="/v3/validate" then Place.programs(canonical) end
+            return canonical,data
+        end)
+        if req.path=="/v3/validate" then
+            if ok then return reply(200,blob,Wire.mime) end
+            return fail(422,tostring(p):gsub("^.-:%d+: ",""):sub(1,240))
+        end
         if not ok then return fail(400,"Invalid binary place.") end
         local pass,png=pcall(preview,p)
         return if pass then reply(200,png,"image/png") else fail(503,"Thumbnail renderer unavailable.")
@@ -177,6 +222,7 @@ end
 
 function Network.serve(store,options)
     local rooms,users={},0
+    local control,active=options.control,{}
     local accounts=if options.accountDir or options.accountAdmin then Accounts.new(options.accountDir) else nil
     local preview=Network.previewer(options.renderURL,options.renderToken)
     local function reader(key) return not options.read or options.read=="" or equal(key,options.read) or equal(key,options.write) end
@@ -221,6 +267,7 @@ function Network.serve(store,options)
     local function handle(req)
         local method,path,key=req.method,req.path,credential(req)
         if method=="GET" and path=="/healthz" then return reply(200,{service="Pot Worlds",status="ok"}) end
+        if control then return fail(404,"Join through the Pot service.") end
         if path:match("^/v3/accounts?/") then return accountRoute(req,key) end
         if method=="GET" and path=="/v3/worlds" then
             return if reader(key) then reply(200,store.list()) else fail(401,"Access denied.")
@@ -265,29 +312,45 @@ function Network.serve(store,options)
         local ok,result=pcall(handle,req)
         return if ok then result else fail(400,"The Pot operation could not be completed.")
     end,handleWebSocket=function(socket)
-        if users>=128 then close(socket,1013); return end
+        if users>=(control and control.limit or 128) then close(socket,1013); return end
         users+=1
-        local r,p,id
+        local r,p,id,lease
         pcall(function()
             local raw=Network.within(5,function() return socket:next() end)
             local hello=Wire.decode(raw,2048)
-            assert(type(hello)=="table" and hello.type=="join" and Place.id(hello.world) and reader(hello.credential))
-            local avatar
-            if hello.account~=nil then
-                local accountID=accounts and accounts.identify(hello.account)
-                assert(accountID,"Invalid Pot account credential.")
-                avatar=accounts.avatar(accountID)
+            assert(type(hello)=="table" and hello.type=="join" and Place.id(hello.world))
+            local avatar,place,revision,capacity
+            if control then
+                local grant=control.redeem(hello)
+                lease,id,revision,capacity,avatar=grant.admission,grant.server,grant.revision,grant.capacity,grant.avatar
+                active[lease]=socket
+                r=rooms[id]
+                if not r then
+                    place=Place.validate(Wire.decode(grant.project.data,Place.limit))
+                    assert(place.id==hello.world and Store.revision(place)==revision,"Invalid published release.")
+                end
+            else
+                assert(reader(hello.credential),"World access is required.")
+                if hello.account~=nil then
+                    local accountID=accounts and accounts.identify(hello.account)
+                    assert(accountID,"Invalid Pot account credential.")
+                    avatar=accounts.avatar(accountID)
+                end
+                id=hello.world
+                place=assert(store.load(id))
+                revision,capacity=Store.revision(place),24
+                r=rooms[id]
             end
-            id=hello.world
-            local place=assert(store.load(id))
-            local revision=Store.revision(place)
-            r=rooms[id]
-            if r and r.revision~=revision then reload(id); r=nil end
+            if r and r.revision~=revision then
+                assert(not control,"This server already has a pinned release.")
+                reload(id); r=nil
+            end
             if not r then r={sim=Room.create(place),peers={},n=0,revision=revision}; rooms[id]=r end
-            assert(r.n<24)
+            assert(r.n<capacity)
             p=Room.add(r.sim,avatar)
             r.n+=1
-            socket:send(Wire.encode({type="welcome",id=p.id,allowReset=r.sim.allowReset}),true)
+            socket:send(Wire.encode({type="welcome",id=p.id,allowReset=r.sim.allowReset,
+                server=if control then id else nil,revision=if control then revision else nil}),true)
             r.peers[socket]={busy=false}
             local budget,last=40,os.clock()
             while rooms[id]==r do
@@ -312,9 +375,11 @@ function Network.serve(store,options)
             r.n-=1
             if r.n==0 and rooms[id]==r then rooms[id]=nil end
         end
+        if lease then active[lease]=nil;control.release(lease) end
         users-=1
         close(socket)
     end})
+    if control then control.monitor(active,close) end
     task.spawn(function()
         local tick,last,remainder=0,os.clock(),0
         while true do

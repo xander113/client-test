@@ -2,7 +2,6 @@ local UI=require("ui")
 local View=require("view")
 local Wire=require("wire")
 local Hierarchy=require("hierarchy")
-local Physics=require("physics")
 local Surface=require("surface")
 local G=love.graphics
 local Studio={}
@@ -37,7 +36,7 @@ local function clamp(a,b,c) return math.max(b,math.min(c,a)) end
 local function copy(v) return Wire.decode(Wire.encode(v)) end
 local function blank()
     return {schemaVersion=5,id="world-"..id(),name="Untitled world",description="",spawn={x=0,y=0,z=5},allowReset=true,
-        textures=Wire.array(),movement={walkSpeed=Physics.walkSpeed,jumpHeight=Physics.jumpHeight},
+        textures=Wire.array(),
         objects=Wire.array({{id="ground",name="Ground",kind="box",position={0,-.5,0},rotation={0,0,0},size={34,1,34},
             color="#91bfa0",solid=true}}),scripts=Wire.array()}
 end
@@ -555,17 +554,6 @@ function Studio:inspector(x,y,w,h,locked)
         row=row+62
         local preferred=self.nodes[self.scene.defaultSpawn]
         ui:text(preferred and ("Default spawn   "..preferred.name) or "Spawn selection   Automatic",x+9,row,C.muted,ui.small,w-18)
-        row=row+32
-        local movement=self.scene.movement
-        local cell=(w-30)/2
-        self:property("WalkSpeed",tostring(movement.walkSpeed),x+9,row,cell,function(value)
-            local speed=tonumber(value)
-            if speed and speed==speed then movement.walkSpeed=clamp(speed,0,Physics.maxSpeed);self:checkpoint() end
-        end)
-        self:property("JumpHeight",tostring(movement.jumpHeight),x+21+cell,row,cell,function(value)
-            local jump=tonumber(value)
-            if jump and jump==jump then movement.jumpHeight=clamp(jump,0,Physics.maxJump);self:checkpoint() end
-        end)
     end
 end
 

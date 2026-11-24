@@ -1,16 +1,19 @@
 local Place=require("./place")
 local Script=require("./scripting")
 local Wire=require("./wire")
-local Physics=require("./physics")
 
 local Room={}
-local radius,height=Physics.radius,Physics.height
+local radius,height=.3,1.65
 local dt=1/60
+local gravity=22
 local zero={x=0,z=0,yaw=0,jump=0}
 local colors={"#09b734","#397db8","#a871ad","#d48650","#4b9a92","#cb6861"}
 
-local function overlap(lo,hi,y)
-    return lo and y+height>lo+.001 and y<hi-.001
+local function footprint(b,x,z)
+    return x+radius>b.lo[1] and x-radius<b.hi[1] and z+radius>b.lo[3] and z-radius<b.hi[3]
+end
+local function vertical(b,y)
+    return y+height>b.lo[2]+.001 and y<b.hi[2]-.001
 end
 local function stand(r,p,point,spread)
     local at=point.at
@@ -26,10 +29,7 @@ local function stand(r,p,point,spread)
     p.contacts={}
     p.received,p.interaction=-1,nil
     for _,b in ipairs(r.parts) do
-        if b.solid then
-            local lo,hi=Physics.span(b.shape,x,z)
-            if overlap(lo,hi,p.at[2]) then p.at[2]=hi end
-        end
+        if b.solid and footprint(b,p.at[1],p.at[3]) and vertical(b,p.at[2]) then p.at[2]=math.max(p.at[2],b.hi[2]) end
     end
     r.dirty=true
 end
@@ -57,7 +57,8 @@ local function spawn(r,p,spread)
     local point=r.defaultSpawn
     if not point and #r.entries>0 then point=r.entries[(p.slot-1)%#r.entries+1] end
     stand(r,p,point or r.fallback,spread)
-    p.walkSpeed,p.jumpHeight=r.walkSpeed,r.jumpHeight
+    p.walkSpeed=r.movement.walkSpeed or 6.5
+    p.jumpHeight=r.movement.jumpHeight
     p.arrivals+=1
     invoke(r,r.onSpawn,p.id)
 end
@@ -69,11 +70,6 @@ local function effect(r,b,key)
 end
 
 local function bind(r,part,code)
-    local function player(id)
-        local actor=type(id)=="string" and r.actors[id]
-        assert(not r.localOnly and actor,"Choose an active player from a Script.")
-        return actor
-    end
     local function target(id)
         local b=if id=="self" then part else r.byId[id]
         assert(b,"No part has that ID.")
@@ -129,12 +125,14 @@ local function bind(r,part,code)
             actor.requestedSpawn=point
         end,
         setWalkSpeed=function(id,speed)
-            assert(Place.number(speed,0,Physics.maxSpeed),"WalkSpeed must be between 0 and 64.")
-            player(id).walkSpeed=speed
+            local actor=type(id)=="string" and r.actors[id]
+            assert(not r.localOnly and actor and Place.number(speed,0,64),"Choose an active player and a WalkSpeed from 0 to 64.")
+            actor.walkSpeed=speed
         end,
         setJumpHeight=function(id,jump)
-            assert(Place.number(jump,0,Physics.maxJump),"JumpHeight must be between 0 and 32.")
-            player(id).jumpHeight=jump
+            local actor=type(id)=="string" and r.actors[id]
+            assert(not r.localOnly and actor and Place.number(jump,0,32),"Choose an active player and a JumpHeight from 0 to 32.")
+            actor.jumpHeight=jump
         end,
         after=function(seconds,fn)
             assert(Place.number(seconds,.1,30),"Delay must be from 0.1 to 30 seconds.")
@@ -150,12 +148,10 @@ function Room.create(place,localOnly)
     local r={fallback={at={place.spawn.x,place.spawn.y,place.spawn.z},yaw=0},parts={},byId={},sensors={},actors={},flags={},flagCount=0,
         time=0,changed={},timers={},dirty=true,lowest=place.spawn.y,sequence=0,allowReset=place.allowReset~=false,
         spawnPoints={},entries={},onSpawn={},localOnly=localOnly,authority=if localOnly then {} else nil,
-        walkSpeed=place.movement and place.movement.walkSpeed or Physics.walkSpeed,
-        jumpHeight=place.movement and place.movement.jumpHeight or Physics.jumpHeight}
+        movement=place.movement or {}}
     for _,object in ipairs(place.objects) do
         local lo,hi=Place.bounds(object)
-        local b={id=object.id,lo=lo,hi=hi,color=object.color,solid=object.solid,visible=true,press={},touch={},
-            shape=Physics.collider(object,Place.rotation(object.rotation),lo,hi)}
+        local b={id=object.id,lo=lo,hi=hi,color=object.color,solid=object.solid,visible=true,press={},touch={}}
         if localOnly then b.overrides={} end
         r.parts[#r.parts+1]=b
         r.byId[b.id]=b
@@ -212,42 +208,27 @@ function Room.press(r,p,target)
     return true
 end
 
-local function clear(r,x,y,z)
-    for _,b in ipairs(r.parts) do
-        if b.solid then
-            local lo,hi=Physics.span(b.shape,x,z)
-            if overlap(lo,hi,y) then return false end
-        end
-    end
-    return true
-end
-
 local function horizontal(r,p,axis,d)
     if d==0 then return end
     local at=p.at
-    local start=at[axis]
-    local finish=math.clamp(start+d,-320+radius,320-radius)
-    at[axis]=finish
-    local foot=at[2]
-    local blocked=false
+    local before=at[axis]
+    at[axis]=math.clamp(before+d,-320+radius,320-radius)
+    local other=4-axis
     for _,b in ipairs(r.parts) do
-        if b.solid then
-            local lo,hi=Physics.span(b.shape,at[1],at[3])
-            if overlap(lo,hi,at[2]) then
-                if p.grounded and hi-at[2]<=Physics.stepHeight then foot=math.max(foot,hi)
-                else blocked=true;break end
+        if b.solid and vertical(b,at[2]) and at[other]+radius>b.lo[other] and at[other]-radius<b.hi[other] then
+            local edge=if d>0 then b.lo[axis]-radius else b.hi[axis]+radius
+            if (d>0 and before<=edge and at[axis]>edge) or (d<0 and before>=edge and at[axis]<edge) then
+                local top=b.hi[2]
+                local climb=p.grounded and top-at[2]<=.25
+                if climb then
+                    for _,ob in ipairs(r.parts) do
+                        if ob.solid and vertical(ob,top) and footprint(ob,at[1],at[3]) then climb=false; break end
+                    end
+                end
+                if climb then at[2]=top else at[axis]=edge end
             end
         end
     end
-    if not blocked and (foot==at[2] or clear(r,at[1],foot,at[3])) then at[2]=foot;return end
-    -- Keep the exact unblocked progress up to the obstruction so diagonal input can slide.
-    local valid,obstructed=start,finish
-    for _=1,6 do
-        local mid=(valid+obstructed)*.5
-        at[axis]=mid
-        if clear(r,at[1],at[2],at[3]) then valid=mid else obstructed=mid end
-    end
-    at[axis]=valid
 end
 local function motion(r,p)
     local i=p.input
@@ -255,32 +236,28 @@ local function motion(r,p)
         local s,c=math.sin(i.yaw),math.cos(i.yaw)
         local x,z=i.x*c-i.z*s,-i.x*s-i.z*c
         local speed=p.walkSpeed*dt/math.max(1,math.sqrt(x*x+z*z))
-        local segments=math.max(1,math.ceil(speed/.28))
-        for _=1,segments do
-            horizontal(r,p,1,x*speed/segments)
-            horizontal(r,p,3,z*speed/segments)
-        end
+        horizontal(r,p,1,x*speed)
+        horizontal(r,p,3,z*speed)
         p.heading=math.atan2(-x,-z)
     end
     if i.jump~=p.jump then
-        if p.grounded and p.jumpHeight>0 then p.speed=math.sqrt(2*Physics.gravity*p.jumpHeight) end
+        if p.grounded then
+            p.speed=if p.jumpHeight then math.sqrt(2*gravity*p.jumpHeight) else 8.2
+        end
         p.jump=i.jump
     end
+    p.speed-=gravity*dt
     local at=p.at
-    local step=at[2]+p.speed*dt-.5*Physics.gravity*dt*dt
-    p.speed-=Physics.gravity*dt
+    local step=at[2]+p.speed*dt
     local target=step
     p.grounded=false
     for _,b in ipairs(r.parts) do
-        if b.solid then
-            local lo,hi=Physics.span(b.shape,at[1],at[3])
-            if lo then
-                if step<=at[2] and at[2]>=hi-.001 and target<=hi then target=hi;p.grounded=true
-                elseif step>at[2] and at[2]+height<=lo+.001 and target+height>=lo then target=lo-height end
-            end
+        if b.solid and footprint(b,at[1],at[3]) then
+            if p.speed<=0 and at[2]>=b.hi[2]-.001 and target<=b.hi[2] then target=b.hi[2]; p.grounded=true
+            elseif p.speed>0 and at[2]+height<=b.lo[2] and target+height>=b.lo[2] then target=b.lo[2]-height end
         end
     end
-    if p.grounded or target<step then p.speed=0 end
+    if p.grounded or (p.speed>0 and target<step) then p.speed=0 end
     at[2]=target
     if at[2]<math.max(-40,r.lowest-24) then spawn(r,p,true) end
 end
@@ -313,8 +290,8 @@ local function sense(r,p,serverInteraction)
             if distance<best then interaction,best=b.id,distance end
         end
         if #b.touch>0 then
-            local lo,hi=Physics.span(b.shape,p.at[1],p.at[3])
-            local touching=lo and p.at[2]<=hi+.05 and p.at[2]+height>=lo-.05
+            local touching=footprint(b,p.at[1],p.at[3]) and
+                p.at[2]<=b.hi[2]+.05 and p.at[2]+height>=b.lo[2]-.05
             if touching and not p.contacts[b.id] then invoke(r,b.touch,p.id) end
             p.contacts[b.id]=touching
         end

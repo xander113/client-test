@@ -178,6 +178,11 @@ end
 
 function Client:event(event)
     if not self.view.playing then return end
+    if event.type=="sessionPlace" then
+        self.scene=event.scene
+        self.view:set(event.scene)
+        return
+    end
     if event.type=="resetResult" then
         self.resetPending=nil
         if event.ok then

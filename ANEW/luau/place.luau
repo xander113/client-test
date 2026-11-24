@@ -3,7 +3,6 @@ local serde = require("@lune/serde")
 local Wire = require("./wire")
 local Script = require("./scripting")
 local Hierarchy = require("./hierarchy")
-local Physics = require("./physics")
 local Texture = require("./texture")
 
 local Place = {version=5, limit=1536*1024, magic="POT\0\1"}
@@ -45,13 +44,15 @@ function Place.validate(p)
     assert(old<4 or p.allowReset==nil or type(p.allowReset)=="boolean", "Invalid character reset policy.")
     local movement=if old>=5 then p.movement else nil
     assert(movement==nil or type(movement)=="table", "Invalid movement settings.")
-    local speed=if movement and movement.walkSpeed~=nil then movement.walkSpeed else Physics.walkSpeed
-    local jump=if movement and movement.jumpHeight~=nil then movement.jumpHeight else Physics.jumpHeight
-    assert(Place.number(speed,0,Physics.maxSpeed) and Place.number(jump,0,Physics.maxJump), "Invalid WalkSpeed or JumpHeight.")
+    local speed,jump=movement and movement.walkSpeed,movement and movement.jumpHeight
+    assert((speed==nil or Place.number(speed,0,64)) and (jump==nil or Place.number(jump,0,32)), "Invalid WalkSpeed or JumpHeight.")
+    if speed==16 then speed=nil end
+    if jump==7.2 then jump=nil end
     local result = {
         schemaVersion=Place.version,id=p.id,name=p.name,description=p.description,
         spawn={x=p.spawn.x,y=p.spawn.y,z=p.spawn.z}, allowReset=old<4 or p.allowReset~=false,
-        objects=Wire.array(),scripts=Wire.array(),textures=Wire.array(),movement={walkSpeed=speed,jumpHeight=jump},
+        objects=Wire.array(),scripts=Wire.array(),textures=Wire.array(),
+        movement=if speed~=nil or jump~=nil then {walkSpeed=speed,jumpHeight=jump} else nil,
     }
     local assets=if old>=5 and p.textures~=nil then p.textures else {}
     assert(type(assets)=="table" and #assets<=Texture.maxAssets,"A world can keep up to "..Texture.maxAssets.." imported textures.")

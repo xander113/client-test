@@ -10,6 +10,7 @@ local Room=require("./room")
 local Store=require("./store")
 local Network=require("./network")
 local Accounts=require("./accounts")
+local Hosting=require("./hosting")
 
 local env=process.env
 local mode,root=process.args[1],process.args[2]
@@ -91,14 +92,14 @@ local function desktop()
         return true
     end
     local function remoteSession(service,id,place)
-        local localRoom=Room.create(place,true)
         stop()
         local anchor={}
         current=anchor
         local session=service.join(id)
         if current~=anchor then session.socket:close(); return false end
-        session.id,session.localRoom=session.welcome.id,localRoom
+        session.id,session.localRoom=session.welcome.id,Room.create(session.place or place,true)
         current=session
+        if session.place then send({event={type="sessionPlace",scene=session.place}}) end
         send({event=session.welcome})
         task.spawn(function()
             pcall(function()
@@ -287,4 +288,10 @@ elseif mode=="worlds" then
 elseif mode=="render" then
     local service=Network.render(env.POT_RENDER_HOST or "127.0.0.1",tonumber(env.POT_RENDER_PORT or "4812"),env.POT_RENDER_TOKEN)
     print("PotRenderService listening on "..service.ip..":"..service.port)
-else error("Use desktop, worlds or render.") end
+elseif mode=="hosted" then
+    local host=Hosting.new({id=env.POT_WORKER_ID,token=env.POT_WORKER_TOKEN,
+        url=env.POT_CONTROL_URL,limit=tonumber(env.POT_WORKER_LIMIT or "128")},Network.within)
+    local service=Network.serve(nil,{host=env.POT_WORKER_HOST or "127.0.0.1",
+        port=tonumber(env.POT_WORKER_PORT or "4831"),control=host})
+    print("Pot game worker listening on "..service.ip..":"..service.port)
+else error("Use desktop, worlds, hosted or render.") end

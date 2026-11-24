@@ -1,0 +1,11 @@
+/vendor/
+/.env
+/.env.*
+!/.env.example
+/bootstrap/cache/*.php
+/database/*.sqlite*
+/storage/app/private/*
+/storage/framework/cache/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+/storage/logs/*

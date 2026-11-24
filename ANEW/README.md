@@ -1,4 +1,4 @@
-# Pot 0.5
+# Pot 0.6
 
 Pot Client and Pot Studio are native desktop apps. Lua runs the LÖVE windows, tools, and 3D viewport. Luau runs the world model, movement, scripts, publishing, and PotRenderService in a separate Lune runtime. Projects use binary `.pot` files. The desktop apps communicate with the runtime using length-prefixed MessagePack over authenticated loopback.
 
@@ -8,7 +8,7 @@ Pot Client and Pot Studio are native desktop apps. Lua runs the LÖVE windows, t
 | `luau/` | Project codec, scripting, multiplayer, publishing, and thumbnail rendering. |
 | `tools/` | Developer build and installer source. |
 | `Installers/` | Windows x64 Setup executables and macOS Universal app archives for this edition. |
-| `WEBSERVICE/` | Empty directory reserved for the future website. |
+| `WEBSERVICE/` | Laravel accounts, creator tools, publishing, and game hosting. |
 
 ## Try the scripted world
 
@@ -30,7 +30,7 @@ Add a **Spawn Point**, move or rotate it, and optionally choose **Make default**
 
 ## Movement and textures
 
-New and migrated worlds default to **WalkSpeed 16 studs per second**, **JumpHeight 7.2 studs**, and gravity of **196.2 studs per second squared**. Edit **WalkSpeed** and **JumpHeight** in Workspace properties. The same simulation runs in Studio playtest, solo play, and multiplayer. Players collide with rotated boxes, spheres, and cylinders and step onto low ledges without jumping.
+The 0.4 movement defaults are restored, including a walk speed of 6.5, the earlier jump and gravity, and the earlier collision handling. Imported projects using the 0.5 defaults move at the restored settings. Historical custom overrides and existing Script calls remain readable.
 
 Select a part and open **Textures** in Properties. Select any face or **All faces**, then choose a built-in image or import a PNG. **Tile** repeats the image at the entered U and V dimensions in studs. **Fit once** stretches it across the face. A face-specific layer takes priority over **All faces**. PNG alpha controls how much of the original part color shows through. Use **Apply textures** to save the changes in the project.
 
@@ -97,21 +97,11 @@ Run `lune run luau/main.luau worlds /absolute/path/to/ANEW/luau` to start a worl
 | `GET /v3/session` via WebSocket | Binary join, input, press, reset, and authoritative snapshots. The first frame supplies the world ID and access credential. `welcome.allowReset` advertises the policy. A `reset` packet can reset the authenticated player's avatar and returns `resetResult`. |
 | `POST /v3/render` | Generate a map PNG from a binary place. |
 
-## Accounts for the future website
+## Website and online play
 
-Pot Worlds stores each account's stable ID, display name, four avatar colors, and integer currency balance. Configure `POT_ACCOUNT_ADMIN_TOKEN` for account provisioning and currency operations on the trusted service. Use `POT_ACCOUNT_DATA_DIR` for durable storage. It defaults to the `accounts` subdirectory of `POT_WORLD_DATA_DIR` when configured. Run one writer per account data directory.
+The Laravel Webservice manages account access, game visibility, versioned publishing, and admission to Luau multiplayer workers. Configure the desktop backend with `POT_API_ENDPOINT` and a website-issued `POT_ACCOUNT_TOKEN`. [Webservice setup and deployment](WEBSERVICE/README.md)
 
-The website can provision accounts after its own authentication. Provide 32 bytes of cryptographically random data encoded as 64 lowercase hexadecimal characters for each account credential. The service stores a SHA-256 digest and allows credential rotation. For desktop testing, set `POT_ACCOUNT_TOKEN` with `POT_API_ENDPOINT` in the launch environment. Account sessions use the saved display name and palette. Guest sessions remain available. Balances are visible through the authenticated account API.
-
-| Binary v3 route | Credential and request |
-| --- | --- |
-| `GET /v3/account/me` | Account token. Returns `id`, `displayName`, `look`, and `balance`. |
-| `PUT /v3/account/me/look` | Account token. Supply `skin`, `shirt`, `pants`, and `visor` as `#rrggbb` strings. |
-| `GET /v3/accounts/{id}` | Account admin token. Reads one account. |
-| `PUT /v3/accounts/{id}` | Account admin token. Provision an account with `displayName` and `credential`. Supply `look` optionally, or update the existing fields and rotate the credential. |
-| `POST /v3/accounts/{id}/currency` | Account admin token. Supply `operation` and a signed integer `delta`. Retrying the same operation returns its recorded result. Conflicting retries and insufficient balances return HTTP 409. |
-
-All requests and responses above use MessagePack. Account administration is separate from publishing credentials. These endpoints run in Pot Worlds. The `WEBSERVICE` folder remains reserved for the website.
+The standalone Luau Worlds service remains available for local testing and retains its standalone account store. A website-hosted game uses the Laravel account and release data.
 
 ## Build and test
 

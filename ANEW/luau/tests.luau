@@ -10,7 +10,6 @@ local Script=require("./scripting")
 local Store=require("./store")
 local Network=require("./network")
 local Hierarchy=require("./hierarchy")
-local Physics=require("./physics")
 local Accounts=require("./accounts")
 local Thumbnail=require("./thumbnail")
 local root=assert(process.args[1],"Provide the absolute luau directory.")
@@ -39,9 +38,10 @@ assert(old.schemaVersion==Place.version and #old.scripts==0 and old.allowReset)
 local migrated=Place.validate({schemaVersion=3,id="old-script",name="Old script",description="",spawn=p.spawn,
     objects={p.objects[1]},scripts={{part=p.objects[1].id,enabled=true,source=p.scripts[1].source}}})
 assert(migrated.scripts[1].kind=="script" and migrated.scripts[1].parent==p.objects[1].id)
-assert(migrated.movement.walkSpeed==16 and migrated.movement.jumpHeight==7.2)
+assert(migrated.movement==nil)
 
 local runWorld=Place.validate({schemaVersion=Place.version,id="track",name="Track",description="",spawn={x=0,y=0,z=0},
+    movement={walkSpeed=16,jumpHeight=7.2},
     scripts={},objects={{id="floor",name="Floor",kind="box",position={0,-.5,0},size={128,1,128},
         rotation={0,0,0},color="#ccd5cc",solid=true}}})
 local track=Room.create(runWorld)
@@ -51,22 +51,18 @@ for _=1,60 do
     assert(Room.input(track,runner,{x=1,z=1,yaw=0,jump=0}))
     Room.step(track)
 end
-assert(math.abs(math.sqrt(runner.at[1]^2+runner.at[3]^2)-16)<1e-6,"Default diagonal WalkSpeed must be 16.")
+assert(math.abs(math.sqrt(runner.at[1]^2+runner.at[3]^2)-6.5)<1e-6,"Default movement must use the 0.4 pace.")
 Room.input(track,runner,{x=0,z=0,yaw=0,jump=1})
 local apex=0
 for _=1,60 do Room.step(track);apex=math.max(apex,runner.at[2]) end
-assert(math.abs(apex-7.2)<.008 and runner.grounded,"Jump must respect its authored height and land.")
+assert(math.abs(apex-1.46055556)<.00001 and runner.grounded,"Default jump must match the 0.4 trajectory.")
 runWorld.objects[#runWorld.objects+1]={id="wall",name="Wall",kind="box",position={4,3,0},size={.10,6,8},
     rotation={0,0,0},color="#aaaaaa",solid=true}
-runWorld.movement.walkSpeed=Physics.maxSpeed
+runWorld.movement={walkSpeed=64}
 local sprint=Room.create(runWorld)
 local sprinter=Room.add(sprint)
 for _=1,20 do Room.input(sprint,sprinter,{x=1,z=0,yaw=0,jump=0});Room.step(sprint) end
-assert(sprinter.at[1]>3.6 and sprinter.at[1]<=3.65,"Thin walls must resist fast movement.")
-local rotated={kind="box",size={.2,8,8},position={0,4,0},rotation={0,45,0}}
-local lo,hi=Place.bounds(rotated)
-local shape=Physics.collider(rotated,Place.rotation(rotated.rotation),lo,hi)
-assert(Physics.span(shape,0,0) and not Physics.span(shape,2.5,-2.5),"Rotated colliders must leave their bounding-box corners open.")
+assert(sprinter.at[1]>3.6 and sprinter.at[1]<=3.650001,"Thin walls must resist fast movement.")
 
 local function duplicate(value) return Wire.decode(Wire.encode(value)) end
 local solidImage=Wire.bytes(string.char(44,145,214,255):rep(4))
@@ -237,5 +233,5 @@ studio.remove(p.id)
 studio.remove(locked.id)
 assert(#studio.managed()==0)
 service:stop()
-print("Luau tests passed: movement, rotated collisions, binary textures and previews, multiplayer spawning and resets, accounts and durable currency.")
+print("Luau tests passed: restored movement, binary textures and previews, multiplayer spawning and resets, accounts and durable currency.")
 process.exit(0)

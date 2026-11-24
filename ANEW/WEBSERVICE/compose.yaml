@@ -1,0 +1,110 @@
+x-pot-web: &pot-web
+  image: pot-webservice:0.6
+  build:
+    context: .
+    dockerfile: deploy/php.Dockerfile
+  environment:
+    APP_NAME: Pot
+    APP_ENV: production
+    APP_DEBUG: 'false'
+    APP_KEY: ${APP_KEY:?Set the Laravel application key}
+    APP_URL: ${APP_URL:-http://127.0.0.1:8088}
+    LOG_CHANNEL: stderr
+    DB_CONNECTION: pgsql
+    DB_HOST: database
+    DB_DATABASE: pot
+    DB_USERNAME: pot
+    DB_PASSWORD: ${DB_PASSWORD:?Set the database password}
+    SESSION_DRIVER: database
+    SESSION_ENCRYPT: 'true'
+    SESSION_SECURE_COOKIE: ${SESSION_SECURE_COOKIE:-false}
+    SESSION_SAME_SITE: lax
+    CACHE_STORE: database
+    POT_TRUSTED_PROXIES: ${POT_TRUSTED_PROXIES:-}
+    POT_CONTENT_URL: http://renderer:4812
+    POT_CONTENT_TOKEN: ${POT_CONTENT_TOKEN:?Set a renderer secret}
+    POT_GAME_NODES: core:${POT_WORKER_TOKEN:?Set a worker secret}
+    POT_LEDGER_TOKEN: ${POT_LEDGER_TOKEN:-}
+    POT_ROOM_SIZE: ${POT_ROOM_SIZE:-24}
+  volumes:
+    - content:/var/www/pot/storage/app/private
+    - ./deploy/pot.ini:/usr/local/etc/php/conf.d/pot.ini:ro
+
+x-pot-runtime: &pot-runtime
+  image: pot-luau-service:0.6
+  build:
+    context: ..
+    dockerfile: WEBSERVICE/deploy/runtime.Dockerfile
+
+services:
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: pot
+      POSTGRES_USER: pot
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set the database password}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pot -d pot"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    <<: *pot-web
+    command: ["php", "artisan", "migrate", "--force"]
+    depends_on:
+      database:
+        condition: service_healthy
+
+  web:
+    <<: *pot-web
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  maintenance:
+    <<: *pot-web
+    command: ["php", "artisan", "schedule:work"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  gateway:
+    image: nginx:1.28-alpine
+    ports:
+      - "127.0.0.1:${POT_HTTP_PORT:-8088}:8080"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./public/pot.css:/var/www/pot/public/pot.css:ro
+    depends_on:
+      - web
+      - worker
+    restart: unless-stopped
+
+  worker:
+    <<: *pot-runtime
+    command: ["lune", "run", "/srv/pot/main.luau", "hosted", "/srv/pot"]
+    environment:
+      POT_CONTROL_URL: http://gateway:8081
+      POT_WORKER_HOST: 0.0.0.0
+      POT_WORKER_ID: core
+      POT_WORKER_TOKEN: ${POT_WORKER_TOKEN:?Set a worker secret}
+      POT_WORKER_LIMIT: ${POT_WORKER_LIMIT:-128}
+    restart: unless-stopped
+
+  renderer:
+    <<: *pot-runtime
+    command: ["lune", "run", "/srv/pot/main.luau", "render", "/srv/pot"]
+    environment:
+      POT_RENDER_HOST: 0.0.0.0
+      POT_RENDER_TOKEN: ${POT_CONTENT_TOKEN:?Set a renderer secret}
+    restart: unless-stopped
+
+volumes:
+  postgres:
+  content:
