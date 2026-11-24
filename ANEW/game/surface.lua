@@ -141,7 +141,7 @@ function Surface:draw(studio)
         end
     else ui:text("Choose a texture for this face.",px+14,py+12,C.muted,ui.font,pw-28) end
     if #self.assets>0 then
-        ui:button("Remove unused image",px+240,y+351,156,24,not self.loading and function()
+        ui:button("Remove image…",px+240,y+351,156,24,not self.loading and function()
             studio.modal={kind="textureRemove",editor=self,offset=0}
         end or nil,{outline=true})
     end
